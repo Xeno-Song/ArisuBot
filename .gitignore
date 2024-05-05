@@ -1,2 +1,6 @@
 ./conf
 **/__pycache__
+**/[bB]uild
+**/.vs
+**/[bB]in
+**/[oO]bj

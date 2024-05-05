@@ -2,4 +2,6 @@
 using ArisuDiscord.Logger;
 
 ArisuCore.Core.Logger = new Logger();
-ArisuCore.Core.Run();
+ArisuCore.Core.Initialize();
+
+Thread.Sleep(10000);

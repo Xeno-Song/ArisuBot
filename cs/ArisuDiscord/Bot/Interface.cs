@@ -67,7 +67,7 @@ namespace ArisuDiscord.Bot
 
                 MentionEventArgs eventArgs = new MentionEventArgs();
                 eventArgs.UserName = context!.User.Username;
-                eventArgs.UserMessage = context!.Message.Content;
+                eventArgs.UserMessage = context!.Message.CleanContent;
 
                 OnMention?.Invoke(this, eventArgs);
 

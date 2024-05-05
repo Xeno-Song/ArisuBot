@@ -27,4 +27,4 @@ bot.OnMention += (sender, eventArgs) =>
 
 ArisuCore.Core.Logger.Info("Ready for messaging!");
 
-Task.Delay(1000000).Wait();
+Task.Delay(-1).Wait();

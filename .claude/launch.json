@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ArisuBot",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/ArisuBot.Host/ArisuBot.Host.csproj"],
+      "port": 0
+    }
+  ]
+}

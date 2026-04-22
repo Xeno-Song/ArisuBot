@@ -159,21 +159,23 @@ public interface IAIMessageLogger
 
 `ConversationService`는 컨텍스트 관리만 담당한다. LLM 호출과 로깅은 Handler(오케스트레이터)가 직접 수행한다.
 
+> **구현 상태**: `MessageHandler`의 LLM 연동 (ConversationService + ILLMProvider 호출) 미구현. Discord 레이어 구조만 완성. LLM Provider 구현 완료 후 연동 예정.
+
 ```
 Discord Event
      │
      ▼
 [MessageHandler / SlashCommandHandler]  ← 오케스트레이터 역할
      │
-     ├─ 채널 Config 확인 (리스너 반응 여부)
+     ├─ 채널 Config 확인 (ShouldRespond)
      │
-     ├─ ConversationService.GetContextAsync()
-     ├─ ConversationService.BuildMessageList()
+     ├─ [미구현] ConversationService.GetContextAsync()
+     ├─ [미구현] ConversationService.BuildMessageList()
      │
-     ├─ ILLMProvider.GenerateAsync()  ← LLMProviderFactory가 Config 기반으로 주입
+     ├─ [미구현] ILLMProvider.GenerateAsync()
      │
-     ├─ ConversationService.AppendMessageAsync() × 2 (유저 메시지, 봇 응답)
-     ├─ IAIMessageLogger.LogAsync()
+     ├─ [미구현] ConversationService.AppendMessageAsync() × 2
+     ├─ [미구현] IAIMessageLogger.LogAsync()
      │
      ▼
 Discord 채널에 응답 전송

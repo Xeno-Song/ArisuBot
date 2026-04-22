@@ -1,0 +1,27 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.userprefs
+
+## Secret config — 절대 커밋 금지
+appsettings.Local.json
+**/appsettings.Local.json
+
+## Logs
+logs/
+*.log
+
+## NuGet
+.nuget/
+*.nupkg
+project.lock.json
+
+## Docker
+.dockerignore
+
+## OS
+.DS_Store
+Thumbs.db

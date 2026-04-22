@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ArisuBot.Core\ArisuBot.Core.csproj" />
+    <ProjectReference Include="..\ArisuBot.LLM\ArisuBot.LLM.csproj" />
+    <ProjectReference Include="..\ArisuBot.Discord\ArisuBot.Discord.csproj" />
+    <ProjectReference Include="..\ArisuBot.Infrastructure\ArisuBot.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

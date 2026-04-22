@@ -16,6 +16,8 @@ using Microsoft.Extensions.Logging;
 
 // Bot 진입점. DI 구성 및 호스트 시작.
 var host = Host.CreateDefaultBuilder(args)
+    // 실행 파일 위치를 content root로 설정 — appsettings.json이 복사된 bin/Debug/net8.0/ 탐색
+    .UseContentRoot(AppContext.BaseDirectory)
     .ConfigureAppConfiguration((_, config) =>
     {
         config.AddJsonFile("appsettings.json", optional: false);

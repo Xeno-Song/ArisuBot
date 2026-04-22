@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ArisuBot (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-host",
+      "program": "${workspaceFolder}/src/ArisuBot.Host/bin/Debug/net8.0/ArisuBot.Host.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/ArisuBot.Host/bin/Debug/net8.0",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {}
+    }
+  ]
+}

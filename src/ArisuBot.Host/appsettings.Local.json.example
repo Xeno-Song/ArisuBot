@@ -1,0 +1,9 @@
+{
+  "Discord": {
+    "Token": "YOUR_BOT_TOKEN_HERE",
+    "DevGuildId": "YOUR_GUILD_ID_HERE"
+  },
+  "MongoDB": {
+    "ConnectionString": "mongodb://localhost:27017"
+  }
+}

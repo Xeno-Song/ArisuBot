@@ -1,0 +1,30 @@
+using ArisuBot.Core.Interfaces;
+using ArisuBot.LLM.Gemini;
+using ArisuBot.LLM.Options;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using System.Diagnostics.CodeAnalysis;
+
+namespace ArisuBot.LLM.Extensions;
+
+/// <summary>LLM 관련 DI 등록 확장 메서드.</summary>
+public static class LLMServiceExtensions
+{
+    /// <summary>config에 따라 LLM 공급자를 DI 컨테이너에 등록한다. 현재: Gemini 고정.</summary>
+    [ExcludeFromCodeCoverage(Justification = "DI 배선 코드 — 실 IServiceCollection 없이 단위 테스트 불가.")]
+    public static IServiceCollection AddLLMProvider(
+        this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<LLMOptions>(configuration.GetSection(LLMOptions.SectionName));
+        services.Configure<GeminiOptions>(configuration.GetSection(GeminiOptions.SectionName));
+        // GeminiStreamClient: API 키 필요 → Options에서 팩토리 생성
+        services.AddSingleton<IGeminiStreamClient>(sp =>
+        {
+            var opts = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
+            return new GeminiStreamClient(opts.ApiKey);
+        });
+        services.AddSingleton<ILLMProvider, GeminiProvider>();
+        return services;
+    }
+}

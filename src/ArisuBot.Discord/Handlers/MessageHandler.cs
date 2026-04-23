@@ -1,47 +1,160 @@
+using ArisuBot.Core.Interfaces;
+using ArisuBot.Core.Models;
+using ArisuBot.Core.Services;
 using ArisuBot.Discord.Options;
 using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 
 namespace ArisuBot.Discord.Handlers;
 
-/// <summary>Discord 메시지 이벤트를 수신하고 응답 여부를 판단한다. LLM 연동은 미구현.</summary>
+/// <summary>Discord 메시지 이벤트를 수신하고 LLM 응답을 오케스트레이션한다.</summary>
 public class MessageHandler
 {
     private readonly DiscordSocketClient _client;
+    private readonly DiscordOptions _discordOptions;
     private readonly MessageListenerOptions _listenerOptions;
+    private readonly ConversationService _conversationService;
+    private readonly ILLMProvider _llmProvider;
+    private readonly IAIMessageLogger _messageLogger;
+    private readonly IAdminNotifier _adminNotifier;
+    private readonly IPromptLoader _promptLoader;
     private readonly ILogger<MessageHandler> _logger;
 
+    // Session Resume 등으로 인한 동일 메시지 중복 처리 방지
+    private readonly ConcurrentDictionary<ulong, DateTime> _processedMessages = new();
+    private static readonly TimeSpan MessageTtl = TimeSpan.FromMinutes(5);
+
+    [ExcludeFromCodeCoverage(Justification = "DiscordSocketClient 실연결 의존 — DI 배선 전용, 비즈니스 로직 없음.")]
     public MessageHandler(
         DiscordSocketClient client,
         IOptions<DiscordOptions> options,
+        ConversationService conversationService,
+        ILLMProvider llmProvider,
+        IAIMessageLogger messageLogger,
+        IAdminNotifier adminNotifier,
+        IPromptLoader promptLoader,
         ILogger<MessageHandler> logger)
     {
         _client = client;
+        _discordOptions = options.Value;
         _listenerOptions = options.Value.MessageListener;
+        _conversationService = conversationService;
+        _llmProvider = llmProvider;
+        _messageLogger = messageLogger;
+        _adminNotifier = adminNotifier;
+        _promptLoader = promptLoader;
         _logger = logger;
     }
 
-    /// <summary>메시지 수신 시 호출. 봇 메시지 무시, 응답 여부 판단 후 처리.</summary>
+    /// <summary>메시지 수신 시 호출. 응답 여부 판단 후 LLM 호출 및 응답 전송.</summary>
+    [ExcludeFromCodeCoverage(Justification = "Discord.Net sealed 구체 타입(SocketUserMessage) 의존. E2E 테스트 대상.")]
     public async Task HandleAsync(SocketMessage message)
     {
         if (message.Author.IsBot) return;
         if (message is not SocketUserMessage userMessage) return;
 
+        // 동일 message.Id 중복 처리 방지 (Session Resume으로 인한 재전달 대응)
+        var now = DateTime.UtcNow;
+        if (!_processedMessages.TryAdd(userMessage.Id, now)) return;
+        // TTL 초과 항목 정리 — 무한 메모리 증가 방지
+        foreach (var entry in _processedMessages.Where(e => now - e.Value > MessageTtl).ToList())
+            _processedMessages.TryRemove(entry.Key, out _);
+
         var isMention = userMessage.MentionedUsers.Any(u => u.Id == _client.CurrentUser?.Id);
 
-        if (!ShouldRespond(_listenerOptions, userMessage.Channel.Id, isMention)) return;
+        ContextType contextType;
+        ulong targetId;
+        ulong guildId = 0;
 
-        // TODO: LLM 연동 미구현 — ConversationService + ILLMProvider 연동 예정
-        _logger.LogInformation(
-            "Message received in channel {ChannelId} from {UserId}",
-            userMessage.Channel.Id, userMessage.Author.Id);
+        if (userMessage.Channel is SocketDMChannel)
+        {
+            // DM: AdminUserIds ∪ DmWhitelistExtraUserIds에 포함된 유저만 응답
+            var whitelist = _discordOptions.AdminUserIds.Union(_discordOptions.DmWhitelistExtraUserIds);
+            if (!whitelist.Contains(userMessage.Author.Id)) return;
 
-        // 임시 echo — LLM 연동 전 Discord 왕복 검증용. LLM 구현 후 제거.
-        // 멘션 시 reply, 채널 메시지 시 일반 메시지로 응답.
-        var reference = isMention ? new MessageReference(userMessage.Id) : null;
-        await userMessage.Channel.SendMessageAsync($"[Echo] {userMessage.Content}", messageReference: reference);
+            contextType = ContextType.User;
+            targetId = userMessage.Author.Id;
+        }
+        else if (userMessage.Channel is SocketGuildChannel guildChannel)
+        {
+            if (!ShouldRespond(_listenerOptions, userMessage.Channel.Id, isMention)) return;
+
+            contextType = ContextType.Channel;
+            targetId = userMessage.Channel.Id;
+            guildId = guildChannel.Guild.Id;
+        }
+        else
+        {
+            return;
+        }
+
+        await userMessage.Channel.TriggerTypingAsync();
+
+        try
+        {
+            var context = await _conversationService.GetContextAsync(targetId, contextType);
+
+            // 컨텍스트 최초 생성 시 system → persona 순서로 DB에 1회 저장
+            if (context.Messages.Count == 0)
+            {
+                await _conversationService.AppendMessageAsync(context,
+                    new ChatMessage { Role = Role.System, Content = _promptLoader.SystemPrompt });
+                await _conversationService.AppendMessageAsync(context,
+                    new ChatMessage { Role = Role.User, Content = _promptLoader.PersonaPrompt });
+            }
+
+            // BuildMessageList: 현재 컨텍스트 히스토리 + 새 유저 메시지 조합
+            var messages = _conversationService.BuildMessageList(
+                context, userMessage.Content, _promptLoader.SystemPrompt);
+
+            // 유저 메시지를 DB에 저장 (BuildMessageList 호출 후 저장으로 중복 방지)
+            await _conversationService.AppendMessageAsync(context,
+                new ChatMessage { Role = Role.User, Content = userMessage.Content });
+
+            var responses = await _llmProvider.GenerateAsync(messages);
+
+            // 전체 응답 합산 — DB 저장 및 로그용
+            var combinedContent = string.Join("\n", responses.Select(r => r.Content));
+            var providerName = responses.FirstOrDefault()?.ProviderName ?? _llmProvider.ProviderName;
+
+            await _conversationService.AppendMessageAsync(context,
+                new ChatMessage { Role = Role.Assistant, Content = combinedContent });
+
+            // 복수 응답의 토큰 합산 후 컨텍스트에 저장
+            await _conversationService.AppendTokenUsageAsync(context, new TokenUsage
+            {
+                TokensIn      = responses.Sum(r => r.TokensIn),
+                TokensOut     = responses.Sum(r => r.TokensOut),
+                TokensCachedIn = responses.Sum(r => r.TokensCachedIn)
+            });
+
+            await _messageLogger.LogAsync(
+                guildId, targetId, userMessage.Author.Id,
+                userMessage.Content, combinedContent, providerName);
+
+            // 멘션 응답이면 전체 세트 reply, 일반이면 전체 세트 일반 메시지
+            MessageReference? reference = isMention ? new MessageReference(userMessage.Id) : null;
+            foreach (var response in responses)
+            {
+                foreach (var chunk in SplitIntoChunks(response.Content))
+                {
+                    await userMessage.Channel.SendMessageAsync(chunk, messageReference: reference);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "LLM 호출 실패 — channelId={ChannelId} userId={UserId}",
+                userMessage.Channel.Id, userMessage.Author.Id);
+
+            await _adminNotifier.NotifyAsync(
+                $"[ArisuBot 오류] {ex.GetType().Name}: {ex.Message}" +
+                $"\n채널: {userMessage.Channel.Id}\n유저: {userMessage.Author.Id}");
+        }
     }
 
     /// <summary>채널 목록 포함 여부 또는 멘션 설정에 따라 응답 여부를 반환한다.</summary>
@@ -50,5 +163,13 @@ public class MessageHandler
         if (options.ChannelIds.Contains(channelId)) return true;
         if (isMention && options.RespondToMentions) return true;
         return false;
+    }
+
+    /// <summary>문자열을 maxLength 단위로 분할한다. Discord 2000자 제한 대응.</summary>
+    internal static IEnumerable<string> SplitIntoChunks(string text, int maxLength = 2000)
+    {
+        if (string.IsNullOrEmpty(text)) yield break;
+        for (var i = 0; i < text.Length; i += maxLength)
+            yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
     }
 }

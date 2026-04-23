@@ -22,6 +22,14 @@ public class ConversationDocument
     [BsonElement("messages")]
     public List<ChatMessageDocument> Messages { get; set; } = new();
 
+    /// <summary>이 세션에서 발생한 LLM 요청별 토큰 사용량 이력.</summary>
+    [BsonElement("tokenUsage")]
+    public List<TokenUsageDocument> TokenUsage { get; set; } = new();
+
+    /// <summary>세션 생성 시각. 세션 간 순서 식별에 사용.</summary>
+    [BsonElement("createdAt")]
+    public DateTime CreatedAt { get; set; }
+
     [BsonElement("updatedAt")]
     public DateTime UpdatedAt { get; set; }
 
@@ -32,6 +40,8 @@ public class ConversationDocument
         Type = Enum.Parse<ContextType>(Type, ignoreCase: true),
         TargetId = ulong.Parse(TargetId),
         Messages = Messages.Select(m => m.ToDomain()).ToList(),
+        TokenUsage = TokenUsage.Select(t => t.ToDomain()).ToList(),
+        CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt
     };
 
@@ -43,6 +53,8 @@ public class ConversationDocument
         Type = context.Type.ToString(),
         TargetId = context.TargetId.ToString(),
         Messages = context.Messages.Select(ChatMessageDocument.FromDomain).ToList(),
+        TokenUsage = context.TokenUsage.Select(TokenUsageDocument.FromDomain).ToList(),
+        CreatedAt = context.CreatedAt,
         UpdatedAt = context.UpdatedAt
     };
 }

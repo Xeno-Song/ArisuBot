@@ -1,10 +1,12 @@
 using Discord.Interactions;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics.CodeAnalysis;
 
 namespace ArisuBot.Discord.Handlers;
 
 /// <summary>Discord 슬래시 커맨드 인터랙션을 InteractionService로 라우팅한다.</summary>
+[ExcludeFromCodeCoverage(Justification = "Discord.Net SocketInteraction 실연결 필요. E2E 테스트 대상.")]
 public class SlashCommandHandler
 {
     private readonly DiscordSocketClient _client;

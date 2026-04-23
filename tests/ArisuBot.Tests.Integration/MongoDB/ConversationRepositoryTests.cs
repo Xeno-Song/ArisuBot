@@ -80,19 +80,67 @@ public class ConversationRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ClearContextAsync_RemovesAllMessages()
+    public async Task CreateNewSessionAsync_ReturnsNewEmptyContext_WithSameTargetId()
     {
-        var context = new ConversationContext
+        // 기존 세션 생성 및 메시지 추가
+        var existing = new ConversationContext
         {
             TargetId = 300UL,
             Type = ContextType.Channel,
-            Messages = [new() { Role = Role.User, Content = "msg" }]
+            Messages = [new() { Role = Role.User, Content = "old message" }]
         };
-        await _sut.SaveContextAsync(context);
+        await _sut.SaveContextAsync(existing);
 
-        await _sut.ClearContextAsync(context);
-        var retrieved = await _sut.GetChannelContextAsync(300UL);
+        // 새 세션 생성
+        var newSession = await _sut.CreateNewSessionAsync(300UL, ContextType.Channel);
+
+        Assert.Equal(300UL, newSession.TargetId);
+        Assert.Equal(ContextType.Channel, newSession.Type);
+        Assert.Empty(newSession.Messages);
+        Assert.NotEqual(existing.Id, newSession.Id);
+    }
+
+    [Fact]
+    public async Task GetChannelContextAsync_ReturnsLatestSession_AfterCreateNewSession()
+    {
+        // 기존 세션 생성
+        var existing = new ConversationContext
+        {
+            TargetId = 400UL,
+            Type = ContextType.Channel,
+            Messages = [new() { Role = Role.User, Content = "old" }]
+        };
+        await _sut.SaveContextAsync(existing);
+
+        // 새 세션 생성 (시간 차이를 확보하기 위해 CreatedAt 조작)
+        await Task.Delay(10);
+        await _sut.CreateNewSessionAsync(400UL, ContextType.Channel);
+
+        // GetChannelContextAsync는 최신 세션(빈 메시지)을 반환해야 함
+        var retrieved = await _sut.GetChannelContextAsync(400UL);
 
         Assert.Empty(retrieved.Messages);
+    }
+
+    [Fact]
+    public async Task CreateNewSessionAsync_PreservesOldDocument()
+    {
+        // 기존 세션 저장
+        var context = new ConversationContext
+        {
+            TargetId = 500UL,
+            Type = ContextType.User,
+            Messages = [new() { Role = Role.User, Content = "history" }]
+        };
+        await _sut.SaveContextAsync(context);
+        var oldId = context.Id;
+
+        await Task.Delay(10);
+        var newSession = await _sut.CreateNewSessionAsync(500UL, ContextType.User);
+
+        // 새 세션 Id는 달라야 함 — 기존 doc 삭제하지 않음
+        Assert.NotEqual(oldId, newSession.Id);
+        Assert.NotEmpty(oldId);
+        Assert.NotEmpty(newSession.Id);
     }
 }

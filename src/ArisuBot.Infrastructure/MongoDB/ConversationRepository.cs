@@ -39,19 +39,33 @@ public class ConversationRepository : IConversationRepository
         }
     }
 
-    public async Task ClearContextAsync(ConversationContext context, CancellationToken ct = default)
+    /// <summary>기존 세션을 보존하고 새 빈 컨텍스트 도큐먼트를 삽입한다.</summary>
+    public async Task<ConversationContext> CreateNewSessionAsync(
+        ulong targetId, ContextType type, CancellationToken ct = default)
     {
-        context.Messages.Clear();
-        context.UpdatedAt = DateTime.UtcNow;
-        await SaveContextAsync(context, ct);
+        var now = DateTime.UtcNow;
+        var newContext = new ConversationContext
+        {
+            TargetId = targetId,
+            Type = type,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        // SaveContextAsync가 빈 Id를 감지해 insert 처리
+        await SaveContextAsync(newContext, ct);
+        return newContext;
     }
 
-    /// <summary>컨텍스트가 없으면 빈 컨텍스트를 반환한다. DB 저장은 첫 SaveContextAsync 호출 시 수행.</summary>
+    /// <summary>가장 최근 생성된 세션을 반환한다. 없으면 빈 컨텍스트 반환(DB 저장은 첫 SaveContextAsync 시 수행).</summary>
     private async Task<ConversationContext> GetOrCreateAsync(
         string targetId, ContextType type, CancellationToken ct)
     {
         var filter = BuildFilter(targetId, type);
-        var document = await _collection.Find(filter).FirstOrDefaultAsync(ct);
+        // CreatedAt 내림차순 정렬로 가장 최신 세션 조회
+        var document = await _collection
+            .Find(filter)
+            .SortByDescending(d => d.CreatedAt)
+            .FirstOrDefaultAsync(ct);
 
         return document?.ToDomain() ?? new ConversationContext
         {

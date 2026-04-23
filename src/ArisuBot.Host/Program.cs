@@ -4,8 +4,11 @@ using ArisuBot.Core.Services;
 using ArisuBot.Discord;
 using ArisuBot.Discord.Handlers;
 using ArisuBot.Discord.Options;
+using ArisuBot.Discord.Services;
 using ArisuBot.Infrastructure.MongoDB;
 using ArisuBot.Infrastructure.Options;
+using ArisuBot.Infrastructure.Prompts;
+using ArisuBot.LLM.Extensions;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -44,8 +47,15 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<IConversationRepository, ConversationRepository>();
         services.AddSingleton<IAIMessageLogger, AIMessageLogger>();
 
+        // Infrastructure — Prompts (봇 시작 시 파일 로드, /new-session으로 재로드)
+        services.AddSingleton<IPromptLoader>(_ =>
+            new FilePromptLoader(Path.Combine(AppContext.BaseDirectory, "prompts")));
+
         // Core
         services.AddSingleton<ConversationService>();
+
+        // LLM
+        services.AddLLMProvider(config);
 
         // Discord — MessageContent intent: 개발자 포털에서 수동 활성화 필요
         services.AddSingleton(new DiscordSocketClient(new DiscordSocketConfig
@@ -62,6 +72,9 @@ var host = Host.CreateDefaultBuilder(args)
                 DefaultRunMode = RunMode.Async
             });
         });
+        // IDiscordClient: AdminNotifier 주입용 (DiscordSocketClient가 구현)
+        services.AddSingleton<IDiscordClient>(sp => sp.GetRequiredService<DiscordSocketClient>());
+        services.AddSingleton<IAdminNotifier, AdminNotifier>();
         services.AddSingleton<MessageHandler>();
         services.AddSingleton<SlashCommandHandler>();
         services.AddHostedService<BotClient>();

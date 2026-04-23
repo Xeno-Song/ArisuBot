@@ -88,7 +88,8 @@ public class GeminiProvider : ILLMProvider
             .Select(m => new Content
             {
                 Role = m.Role == Core.Models.Role.User ? "user" : "model",
-                Parts = [new Part { Text = m.Content }]
+                // SenderName이 있으면 "[name]: content" 형태로 LLM에 전달해 발신자를 식별할 수 있게 한다
+                Parts = [new Part { Text = m.SenderName is not null ? $"[{m.SenderName}]: {m.Content}" : m.Content }]
             })
             .ToList();
 }

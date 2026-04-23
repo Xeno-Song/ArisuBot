@@ -26,6 +26,10 @@ public class ConversationDocument
     [BsonElement("tokenUsage")]
     public List<TokenUsageDocument> TokenUsage { get; set; } = new();
 
+    /// <summary>대화 참여자 매핑. key: displayName, value: Discord userId(string). ulong BSON 부호 손실 방지를 위해 string으로 저장.</summary>
+    [BsonElement("participants")]
+    public Dictionary<string, string> Participants { get; set; } = new();
+
     /// <summary>세션 생성 시각. 세션 간 순서 식별에 사용.</summary>
     [BsonElement("createdAt")]
     public DateTime CreatedAt { get; set; }
@@ -41,6 +45,7 @@ public class ConversationDocument
         TargetId = ulong.Parse(TargetId),
         Messages = Messages.Select(m => m.ToDomain()).ToList(),
         TokenUsage = TokenUsage.Select(t => t.ToDomain()).ToList(),
+        Participants = Participants.ToDictionary(kvp => kvp.Key, kvp => ulong.Parse(kvp.Value)),
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt
     };
@@ -54,12 +59,14 @@ public class ConversationDocument
         TargetId = context.TargetId.ToString(),
         Messages = context.Messages.Select(ChatMessageDocument.FromDomain).ToList(),
         TokenUsage = context.TokenUsage.Select(TokenUsageDocument.FromDomain).ToList(),
+        Participants = context.Participants.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToString()),
         CreatedAt = context.CreatedAt,
         UpdatedAt = context.UpdatedAt
     };
 }
 
 /// <summary>ChatMessage MongoDB 서브도큐먼트.</summary>
+[BsonIgnoreExtraElements]
 public class ChatMessageDocument
 {
     [BsonElement("role")]
@@ -68,6 +75,10 @@ public class ChatMessageDocument
     [BsonElement("content")]
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>메시지 발신자 표시 이름. null이면 발신자 정보 없음(System/Assistant 또는 레거시 문서).</summary>
+    [BsonElement("senderName")]
+    public string? SenderName { get; set; }
+
     [BsonElement("timestamp")]
     public DateTime Timestamp { get; set; }
 
@@ -75,6 +86,7 @@ public class ChatMessageDocument
     {
         Role = Enum.Parse<Core.Models.Role>(Role, ignoreCase: true),
         Content = Content,
+        SenderName = SenderName,
         Timestamp = Timestamp
     };
 
@@ -82,6 +94,7 @@ public class ChatMessageDocument
     {
         Role = message.Role.ToString(),
         Content = message.Content,
+        SenderName = message.SenderName,
         Timestamp = message.Timestamp
     };
 }

@@ -143,4 +143,38 @@ public class ConversationRepositoryTests : IAsyncLifetime
         Assert.NotEmpty(oldId);
         Assert.NotEmpty(newSession.Id);
     }
+
+    [Fact]
+    public async Task SaveContextAsync_PersistsParticipants()
+    {
+        var context = new ConversationContext
+        {
+            TargetId = 600UL,
+            Type = ContextType.Channel,
+            Participants = new Dictionary<string, ulong> { ["Xeno"] = 123456789UL }
+        };
+
+        await _sut.SaveContextAsync(context);
+        var retrieved = await _sut.GetChannelContextAsync(600UL);
+
+        Assert.Single(retrieved.Participants);
+        Assert.Equal(123456789UL, retrieved.Participants["Xeno"]);
+    }
+
+    [Fact]
+    public async Task SaveContextAsync_PersistsSenderName_InMessages()
+    {
+        var context = new ConversationContext
+        {
+            TargetId = 700UL,
+            Type = ContextType.User,
+            Messages = [new() { Role = Role.User, Content = "hello", SenderName = "Xeno" }]
+        };
+
+        await _sut.SaveContextAsync(context);
+        var retrieved = await _sut.GetUserContextAsync(700UL);
+
+        Assert.Single(retrieved.Messages);
+        Assert.Equal("Xeno", retrieved.Messages[0].SenderName);
+    }
 }

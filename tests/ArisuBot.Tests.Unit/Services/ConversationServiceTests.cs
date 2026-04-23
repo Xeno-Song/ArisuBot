@@ -29,8 +29,9 @@ public class ConversationServiceTests
     public void BuildMessageList_SystemPromptFirst()
     {
         var context = new ConversationContext { Type = ContextType.User };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "hello" };
 
-        var messages = _sut.BuildMessageList(context, "hello", "you are a bot");
+        var messages = _sut.BuildMessageList(context, newMsg, "you are a bot");
 
         Assert.Equal(Role.System, messages[0].Role);
         Assert.Equal("you are a bot", messages[0].Content);
@@ -44,11 +45,25 @@ public class ConversationServiceTests
             Type = ContextType.User,
             Messages = [new() { Role = Role.User, Content = "prev" }]
         };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "new" };
 
-        var messages = _sut.BuildMessageList(context, "new", "sys");
+        var messages = _sut.BuildMessageList(context, newMsg, "sys");
 
         Assert.Contains(messages, m => m.Content == "prev");
         Assert.Contains(messages, m => m.Content == "new" && m.Role == Role.User);
+    }
+
+    [Fact]
+    public void BuildMessageList_IncludesSenderName_InNewMessage()
+    {
+        var context = new ConversationContext { Type = ContextType.User };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "hello", SenderName = "Xeno" };
+
+        var messages = _sut.BuildMessageList(context, newMsg, "sys");
+
+        var userMsg = messages.Last();
+        Assert.Equal("Xeno", userMsg.SenderName);
+        Assert.Equal("hello", userMsg.Content);
     }
 
     [Fact]
@@ -58,8 +73,9 @@ public class ConversationServiceTests
             .Select(i => new ChatMessage { Role = Role.User, Content = $"msg{i}" })
             .ToList();
         var context = new ConversationContext { Type = ContextType.User, Messages = history };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "new" };
 
-        var messages = _sut.BuildMessageList(context, "new", "sys");
+        var messages = _sut.BuildMessageList(context, newMsg, "sys");
 
         // system(1) + UserMax history + new user message(1)
         Assert.Equal(UserMax + 2, messages.Count);
@@ -72,8 +88,9 @@ public class ConversationServiceTests
             .Select(i => new ChatMessage { Role = Role.User, Content = $"msg{i}" })
             .ToList();
         var context = new ConversationContext { Type = ContextType.Channel, Messages = history };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "new" };
 
-        var messages = _sut.BuildMessageList(context, "new", "sys");
+        var messages = _sut.BuildMessageList(context, newMsg, "sys");
 
         Assert.Equal(ChannelMax + 2, messages.Count);
     }

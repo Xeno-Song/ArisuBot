@@ -92,4 +92,56 @@ public class MessageHandlerHelperTests
 
         Assert.Equal(text, string.Concat(chunks));
     }
+
+    // --- ReplaceMentions ---
+
+    [Fact]
+    public void ReplaceMentions_ReplacesKnownName_WithDiscordMention()
+    {
+        var participants = new Dictionary<string, ulong> { ["Xeno"] = 123456789UL };
+
+        var result = MessageHandler.ReplaceMentions("안녕 <<Xeno>>!", participants);
+
+        Assert.Equal("안녕 <@123456789>!", result);
+    }
+
+    [Fact]
+    public void ReplaceMentions_KeepsUnknownName_Unchanged()
+    {
+        var participants = new Dictionary<string, ulong>();
+
+        var result = MessageHandler.ReplaceMentions("안녕 <<Unknown>>!", participants);
+
+        Assert.Equal("안녕 <<Unknown>>!", result);
+    }
+
+    [Fact]
+    public void ReplaceMentions_HandlesMultipleMatches()
+    {
+        var participants = new Dictionary<string, ulong> { ["A"] = 1UL, ["B"] = 2UL };
+
+        var result = MessageHandler.ReplaceMentions("<<A>> and <<B>>", participants);
+
+        Assert.Equal("<@1> and <@2>", result);
+    }
+
+    [Fact]
+    public void ReplaceMentions_NoPatternInText_ReturnsOriginal()
+    {
+        var participants = new Dictionary<string, ulong> { ["Xeno"] = 123UL };
+
+        var result = MessageHandler.ReplaceMentions("아무 멘션 없음", participants);
+
+        Assert.Equal("아무 멘션 없음", result);
+    }
+
+    [Fact]
+    public void ReplaceMentions_MixedKnownAndUnknown()
+    {
+        var participants = new Dictionary<string, ulong> { ["Xeno"] = 999UL };
+
+        var result = MessageHandler.ReplaceMentions("<<Xeno>> <<Ghost>>", participants);
+
+        Assert.Equal("<@999> <<Ghost>>", result);
+    }
 }

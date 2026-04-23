@@ -95,4 +95,89 @@ public class ConversationDocumentMappingTests
         var context = doc.ToDomain();
         Assert.Equal(ulong.MaxValue, context.TargetId);
     }
+
+    [Fact]
+    public void FromDomain_MapsSenderName_WhenSet()
+    {
+        var context = new ConversationContext
+        {
+            TargetId = 1UL,
+            Messages = [new() { Role = Role.User, Content = "hi", SenderName = "Xeno" }]
+        };
+
+        var doc = ConversationDocument.FromDomain(context);
+
+        Assert.Equal("Xeno", doc.Messages[0].SenderName);
+    }
+
+    [Fact]
+    public void ToDomain_MapsSenderName_WhenSet()
+    {
+        var doc = new ConversationDocument
+        {
+            Type = "User",
+            TargetId = "1",
+            Messages = [new ChatMessageDocument { Role = "User", Content = "hi", SenderName = "Xeno" }]
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Equal("Xeno", context.Messages[0].SenderName);
+    }
+
+    [Fact]
+    public void ToDomain_SenderNameIsNull_WhenNotInDocument()
+    {
+        var doc = new ConversationDocument
+        {
+            Type = "User",
+            TargetId = "1",
+            Messages = [new ChatMessageDocument { Role = "User", Content = "hi" }]
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Null(context.Messages[0].SenderName);
+    }
+
+    [Fact]
+    public void FromDomain_MapsParticipants()
+    {
+        var context = new ConversationContext
+        {
+            TargetId = 1UL,
+            Participants = new Dictionary<string, ulong> { ["Xeno"] = 123456789UL }
+        };
+
+        var doc = ConversationDocument.FromDomain(context);
+
+        Assert.Single(doc.Participants);
+        Assert.Equal("123456789", doc.Participants["Xeno"]);
+    }
+
+    [Fact]
+    public void ToDomain_MapsParticipants()
+    {
+        var doc = new ConversationDocument
+        {
+            Type = "User",
+            TargetId = "1",
+            Participants = new Dictionary<string, string> { ["Xeno"] = "123456789" }
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Single(context.Participants);
+        Assert.Equal(123456789UL, context.Participants["Xeno"]);
+    }
+
+    [Fact]
+    public void ToDomain_EmptyParticipants_WhenNotInDocument()
+    {
+        var doc = new ConversationDocument { Type = "User", TargetId = "1" };
+
+        var context = doc.ToDomain();
+
+        Assert.Empty(context.Participants);
+    }
 }

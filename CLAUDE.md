@@ -13,6 +13,10 @@
 4. You SHOULD write work history in related document which in `docs` directory about that you work.
 5. You CANNOT decide or estimate any functional specification or work. You MUST request question to user to decide ambiguous things.
 
+# Security Rule
+1. You MUST NOT read secret or local configuration files: `appsettings.Local.json`, `appsettings.Secret.json`, `.env`, or any file containing credentials, tokens, or API keys. These files contain sensitive information and must never be read or exposed.
+2. To diagnose configuration issues, read only the non-secret config files (e.g. `appsettings.json`) and the relevant Options class comments.
+
 # Code Style
 1. You SHOULD follow recommended naming rule from each framework.
 2. All newly written or updated repository documents MUST be written in Korean unless the user explicitly asks for another language.

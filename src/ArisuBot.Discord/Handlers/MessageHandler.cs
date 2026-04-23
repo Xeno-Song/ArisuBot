@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.RegularExpressions;
 
 namespace ArisuBot.Discord.Handlers;
 
@@ -107,13 +108,18 @@ public class MessageHandler
                     new ChatMessage { Role = Role.User, Content = _promptLoader.PersonaPrompt });
             }
 
+            // 발신자 표시 이름 추출 후 Participants 업데이트 (<<name>> mention 치환에 사용)
+            var displayName = GetDisplayName(userMessage.Author);
+            context.Participants[displayName] = userMessage.Author.Id;
+
+            var newMessage = new ChatMessage { Role = Role.User, Content = userMessage.Content, SenderName = displayName };
+
             // BuildMessageList: 현재 컨텍스트 히스토리 + 새 유저 메시지 조합
             var messages = _conversationService.BuildMessageList(
-                context, userMessage.Content, _promptLoader.SystemPrompt);
+                context, newMessage, _promptLoader.SystemPrompt);
 
-            // 유저 메시지를 DB에 저장 (BuildMessageList 호출 후 저장으로 중복 방지)
-            await _conversationService.AppendMessageAsync(context,
-                new ChatMessage { Role = Role.User, Content = userMessage.Content });
+            // 유저 메시지를 DB에 저장 (BuildMessageList 호출 후 저장으로 중복 방지, Participants도 함께 저장됨)
+            await _conversationService.AppendMessageAsync(context, newMessage);
 
             var responses = await _llmProvider.GenerateAsync(messages);
 
@@ -121,6 +127,7 @@ public class MessageHandler
             var combinedContent = string.Join("\n", responses.Select(r => r.Content));
             var providerName = responses.FirstOrDefault()?.ProviderName ?? _llmProvider.ProviderName;
 
+            // DB에는 LLM 원본 출력(<<name>> 형태) 저장 — 히스토리에서 LLM이 동일 패턴 유지하도록
             await _conversationService.AppendMessageAsync(context,
                 new ChatMessage { Role = Role.Assistant, Content = combinedContent });
 
@@ -132,15 +139,18 @@ public class MessageHandler
                 TokensCachedIn = responses.Sum(r => r.TokensCachedIn)
             });
 
+            // 로그에는 Discord mention 형태(<@userId>)로 치환된 내용 저장
+            var processedContent = ReplaceMentions(combinedContent, context.Participants);
             await _messageLogger.LogAsync(
                 guildId, targetId, userMessage.Author.Id,
-                userMessage.Content, combinedContent, providerName);
+                userMessage.Content, processedContent, providerName);
 
             // 멘션 응답이면 전체 세트 reply, 일반이면 전체 세트 일반 메시지
             MessageReference? reference = isMention ? new MessageReference(userMessage.Id) : null;
             foreach (var response in responses)
             {
-                foreach (var chunk in SplitIntoChunks(response.Content))
+                // Discord 전송 시 <<name>>을 <@userId>로 치환
+                foreach (var chunk in SplitIntoChunks(ReplaceMentions(response.Content, context.Participants)))
                 {
                     await userMessage.Channel.SendMessageAsync(chunk, messageReference: reference);
                 }
@@ -156,6 +166,23 @@ public class MessageHandler
                 $"\n채널: {userMessage.Channel.Id}\n유저: {userMessage.Author.Id}");
         }
     }
+
+    /// <summary>Discord 유저에서 표시 이름을 추출한다. 서버 닉네임 > 글로벌 이름 > 사용자명 우선순위.</summary>
+    [ExcludeFromCodeCoverage(Justification = "SocketGuildUser/SocketUser는 Discord.Net sealed 구체 타입 — E2E 테스트 대상.")]
+    internal static string GetDisplayName(SocketUser author)
+    {
+        if (author is SocketGuildUser guildUser)
+            return guildUser.DisplayName;
+        return author.GlobalName ?? author.Username;
+    }
+
+    /// <summary>텍스트 내 &lt;&lt;name&gt;&gt; 패턴을 Discord mention &lt;@userId&gt;로 치환한다. Participants에 없는 name은 원본 유지.</summary>
+    internal static string ReplaceMentions(string text, IReadOnlyDictionary<string, ulong> participants)
+        => Regex.Replace(text, @"<<([^>]+)>>", match =>
+        {
+            var name = match.Groups[1].Value;
+            return participants.TryGetValue(name, out var userId) ? $"<@{userId}>" : match.Value;
+        });
 
     /// <summary>채널 목록 포함 여부 또는 멘션 설정에 따라 응답 여부를 반환한다.</summary>
     internal static bool ShouldRespond(MessageListenerOptions options, ulong channelId, bool isMention)

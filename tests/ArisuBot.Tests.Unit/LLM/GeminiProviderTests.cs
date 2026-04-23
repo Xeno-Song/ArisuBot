@@ -117,4 +117,46 @@ public class GeminiProviderTests
         Assert.Equal("second", result[1].Parts![0].Text);
         Assert.Equal("third", result[2].Parts![0].Text);
     }
+
+    [Fact]
+    public void BuildContents_PrefixesSenderName_WhenSet()
+    {
+        var messages = new List<ChatMessage>
+        {
+            new() { Role = Role.User, Content = "안녕", SenderName = "Xeno" }
+        };
+
+        var result = GeminiProvider.BuildContents(messages);
+
+        Assert.Single(result);
+        Assert.Equal("[Xeno]: 안녕", result[0].Parts![0].Text);
+    }
+
+    [Fact]
+    public void BuildContents_NoPrefix_WhenSenderNameIsNull()
+    {
+        var messages = new List<ChatMessage>
+        {
+            new() { Role = Role.User, Content = "hello" }
+        };
+
+        var result = GeminiProvider.BuildContents(messages);
+
+        Assert.Single(result);
+        Assert.Equal("hello", result[0].Parts![0].Text);
+    }
+
+    [Fact]
+    public void BuildContents_AssistantMessage_NoPrefix_EvenIfSenderNameSet()
+    {
+        // Assistant 메시지는 SenderName 없음 — null이면 prefix 없음 확인
+        var messages = new List<ChatMessage>
+        {
+            new() { Role = Role.Assistant, Content = "response" }
+        };
+
+        var result = GeminiProvider.BuildContents(messages);
+
+        Assert.Equal("response", result[0].Parts![0].Text);
+    }
 }

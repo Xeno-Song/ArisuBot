@@ -48,8 +48,14 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<IAIMessageLogger, AIMessageLogger>();
 
         // Infrastructure — Prompts (봇 시작 시 파일 로드, /new-session으로 재로드)
-        services.AddSingleton<IPromptLoader>(_ =>
-            new FilePromptLoader(Path.Combine(AppContext.BaseDirectory, "prompts")));
+        // 개발 환경: bin/Debug/net8.0/에서 ../../../ 로 올라가면 프로젝트 소스 디렉터리.
+        // 소스 prompts/가 존재하면 직접 참조해 재빌드 없이 파일 수정 즉시 반영.
+        // 배포 환경(publish/): ../../../ 경로에 prompts/ 없으므로 output 디렉터리로 fallback.
+        var sourcePromptsPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../prompts"));
+        var promptsPath = Directory.Exists(sourcePromptsPath)
+            ? sourcePromptsPath
+            : Path.Combine(AppContext.BaseDirectory, "prompts");
+        services.AddSingleton<IPromptLoader>(_ => new FilePromptLoader(promptsPath));
 
         // Core
         services.AddSingleton<ConversationService>();

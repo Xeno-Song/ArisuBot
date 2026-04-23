@@ -9,6 +9,8 @@ public class ConversationContext
     public List<ChatMessage> Messages { get; set; } = new();
     /// <summary>이 세션에서 발생한 LLM 요청별 토큰 사용량 이력.</summary>
     public List<TokenUsage> TokenUsage { get; set; } = new();
+    /// <summary>대화에 참여한 유저 매핑. key: displayName, value: Discord userId. LLM <<name>> mention 치환에 사용.</summary>
+    public Dictionary<string, ulong> Participants { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -11,6 +11,12 @@ public class DiscordOptions
     /// <summary>슬래시 커맨드를 즉시 등록할 개발용 길드 ID.</summary>
     public string DevGuildId { get; set; } = string.Empty;
 
+    /// <summary>에러 발생 시 DM 알림을 받을 관리자 User ID 목록. DM whitelist에도 자동 포함.</summary>
+    public ulong[] AdminUserIds { get; set; } = [];
+
+    /// <summary>관리자 외 DM 응답을 허용할 추가 User ID 목록.</summary>
+    public ulong[] DmWhitelistExtraUserIds { get; set; } = [];
+
     public MessageListenerOptions MessageListener { get; set; } = new();
 }
 

@@ -8,6 +8,8 @@ public class ConversationDocumentMappingTests
     [Fact]
     public void FromDomain_MapsAllFields()
     {
+        var createdAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var updatedAt = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc);
         var context = new ConversationContext
         {
             Id = "507f1f77bcf86cd799439011",
@@ -17,7 +19,12 @@ public class ConversationDocumentMappingTests
             [
                 new() { Role = Role.User, Content = "hello", Timestamp = DateTime.UtcNow }
             ],
-            UpdatedAt = DateTime.UtcNow
+            TokenUsage =
+            [
+                new() { TokensIn = 100, TokensOut = 50, TokensCachedIn = 10, Timestamp = createdAt }
+            ],
+            CreatedAt = createdAt,
+            UpdatedAt = updatedAt
         };
 
         var doc = ConversationDocument.FromDomain(context);
@@ -28,11 +35,19 @@ public class ConversationDocumentMappingTests
         Assert.Single(doc.Messages);
         Assert.Equal("User", doc.Messages[0].Role);
         Assert.Equal("hello", doc.Messages[0].Content);
+        Assert.Single(doc.TokenUsage);
+        Assert.Equal(100, doc.TokenUsage[0].TokensIn);
+        Assert.Equal(50,  doc.TokenUsage[0].TokensOut);
+        Assert.Equal(10,  doc.TokenUsage[0].TokensCachedIn);
+        Assert.Equal(createdAt, doc.CreatedAt);
+        Assert.Equal(updatedAt, doc.UpdatedAt);
     }
 
     [Fact]
     public void ToDomain_MapsAllFields()
     {
+        var createdAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var updatedAt = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc);
         var doc = new ConversationDocument
         {
             Id = "507f1f77bcf86cd799439011",
@@ -42,7 +57,12 @@ public class ConversationDocumentMappingTests
             [
                 new() { Role = "Assistant", Content = "hi", Timestamp = DateTime.UtcNow }
             ],
-            UpdatedAt = DateTime.UtcNow
+            TokenUsage =
+            [
+                new() { TokensIn = 200, TokensOut = 80, TokensCachedIn = 20, Timestamp = createdAt }
+            ],
+            CreatedAt = createdAt,
+            UpdatedAt = updatedAt
         };
 
         var context = doc.ToDomain();
@@ -52,6 +72,12 @@ public class ConversationDocumentMappingTests
         Assert.Equal(987654321098765432UL, context.TargetId);
         Assert.Single(context.Messages);
         Assert.Equal(Role.Assistant, context.Messages[0].Role);
+        Assert.Single(context.TokenUsage);
+        Assert.Equal(200, context.TokenUsage[0].TokensIn);
+        Assert.Equal(80,  context.TokenUsage[0].TokensOut);
+        Assert.Equal(20,  context.TokenUsage[0].TokensCachedIn);
+        Assert.Equal(createdAt, context.CreatedAt);
+        Assert.Equal(updatedAt, context.UpdatedAt);
     }
 
     [Fact]

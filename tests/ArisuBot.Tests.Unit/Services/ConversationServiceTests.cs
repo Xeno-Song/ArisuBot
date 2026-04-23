@@ -113,4 +113,29 @@ public class ConversationServiceTests
         _repoMock.Verify(r => r.GetChannelContextAsync(2ul, default), Times.Once);
         _repoMock.Verify(r => r.GetUserContextAsync(It.IsAny<ulong>(), default), Times.Never);
     }
+
+    [Fact]
+    public async Task AppendTokenUsageAsync_AddsUsageAndCallsSaveContext()
+    {
+        var context = new ConversationContext { Type = ContextType.Channel };
+        var usage = new TokenUsage { TokensIn = 100, TokensOut = 50, TokensCachedIn = 10 };
+
+        await _sut.AppendTokenUsageAsync(context, usage);
+
+        Assert.Contains(usage, context.TokenUsage);
+        _repoMock.Verify(r => r.SaveContextAsync(context, default), Times.Once);
+    }
+
+    [Fact]
+    public async Task StartNewSessionAsync_CallsCreateNewSessionAsync_WithCorrectArgs()
+    {
+        var newContext = new ConversationContext { TargetId = 10ul, Type = ContextType.Channel };
+        _repoMock.Setup(r => r.CreateNewSessionAsync(10ul, ContextType.Channel, default))
+                 .ReturnsAsync(newContext);
+
+        var result = await _sut.StartNewSessionAsync(10ul, ContextType.Channel);
+
+        Assert.Equal(newContext, result);
+        _repoMock.Verify(r => r.CreateNewSessionAsync(10ul, ContextType.Channel, default), Times.Once);
+    }
 }

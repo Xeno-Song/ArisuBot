@@ -6,11 +6,13 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace ArisuBot.Discord;
 
 /// <summary>Discord Bot 생명주기를 관리하는 IHostedService 구현체.</summary>
+[ExcludeFromCodeCoverage(Justification = "Discord.Net WebSocket 실연결 필요. E2E 테스트 대상.")]
 public class BotClient : IHostedService
 {
     private readonly DiscordSocketClient _client;

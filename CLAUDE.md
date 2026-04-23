@@ -1,3 +1,7 @@
+# Execution Rule
+1. You MUST use the preview tool (`preview_start`) to run the application. NEVER use Bash background commands to start the bot process.
+2. To stop the application, use `preview_stop`. NEVER use `Stop-Process` or `taskkill`.
+
 # Workflow
 1. You MUST build plan before modify the code or documents.
 2. You MUST get approve about plan before executing plan.

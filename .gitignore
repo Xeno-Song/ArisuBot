@@ -25,3 +25,7 @@ project.lock.json
 ## OS
 .DS_Store
 Thumbs.db
+
+## Coverage output
+coverage/
+

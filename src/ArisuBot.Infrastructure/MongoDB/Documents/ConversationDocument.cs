@@ -82,12 +82,33 @@ public class ChatMessageDocument
     [BsonElement("timestamp")]
     public DateTime Timestamp { get; set; }
 
+    // Tool 전용 필드 — Role.ToolCall / ToolResponse에만 설정됨
+    /// <summary>Tool 호출 식별자 (GUID 문자열). ToolCall/ToolResponse 쌍 연결에 사용.</summary>
+    [BsonElement("callId")]
+    public string? CallId { get; set; }
+
+    /// <summary>Tool 이름. Role.ToolCall, Role.ToolResponse에서 설정.</summary>
+    [BsonElement("toolName")]
+    public string? ToolName { get; set; }
+
+    /// <summary>Tool 호출 인자 JSON 문자열. Role.ToolCall에서만 설정.</summary>
+    [BsonElement("toolArgsJson")]
+    public string? ToolArgsJson { get; set; }
+
+    /// <summary>Provider별 보조 메타데이터 JSON. Gemini thought_signature 등 텍스트로 표현 못하는 Part 직렬화 보존.</summary>
+    [BsonElement("providerMetadataJson")]
+    public string? ProviderMetadataJson { get; set; }
+
     public ChatMessage ToDomain() => new()
     {
         Role = Enum.Parse<Core.Models.Role>(Role, ignoreCase: true),
         Content = Content,
         SenderName = SenderName,
-        Timestamp = Timestamp
+        Timestamp = Timestamp,
+        CallId = CallId is not null ? Guid.Parse(CallId) : null,
+        ToolName = ToolName,
+        ToolArgsJson = ToolArgsJson,
+        ProviderMetadataJson = ProviderMetadataJson
     };
 
     public static ChatMessageDocument FromDomain(ChatMessage message) => new()
@@ -95,6 +116,10 @@ public class ChatMessageDocument
         Role = message.Role.ToString(),
         Content = message.Content,
         SenderName = message.SenderName,
-        Timestamp = message.Timestamp
+        Timestamp = message.Timestamp,
+        CallId = message.CallId?.ToString(),
+        ToolName = message.ToolName,
+        ToolArgsJson = message.ToolArgsJson,
+        ProviderMetadataJson = message.ProviderMetadataJson
     };
 }

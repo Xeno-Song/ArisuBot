@@ -180,4 +180,140 @@ public class ConversationDocumentMappingTests
 
         Assert.Empty(context.Participants);
     }
+
+    [Fact]
+    public void FromDomain_MapsToolCallFields_WhenSet()
+    {
+        // Role.ToolCall 메시지의 CallId/ToolName/ToolArgsJson이 도큐먼트에 저장되는지 확인
+        var callId = Guid.NewGuid();
+        var context = new ConversationContext
+        {
+            TargetId = 1UL,
+            Messages =
+            [
+                new()
+                {
+                    Role         = Role.ToolCall,
+                    CallId       = callId,
+                    ToolName     = "my_tool",
+                    ToolArgsJson = """{"userName":"Xeno"}"""
+                }
+            ]
+        };
+
+        var doc = ConversationDocument.FromDomain(context);
+
+        var msgDoc = doc.Messages[0];
+        Assert.Equal("ToolCall", msgDoc.Role);
+        Assert.Equal(callId.ToString(), msgDoc.CallId);
+        Assert.Equal("my_tool", msgDoc.ToolName);
+        Assert.Equal("""{"userName":"Xeno"}""", msgDoc.ToolArgsJson);
+    }
+
+    [Fact]
+    public void ToDomain_MapsToolCallFields_WhenSet()
+    {
+        // 도큐먼트의 CallId/ToolName/ToolArgsJson이 도메인 모델로 복원되는지 확인
+        var callId = Guid.NewGuid();
+        var doc = new ConversationDocument
+        {
+            Type     = "User",
+            TargetId = "1",
+            Messages =
+            [
+                new ChatMessageDocument
+                {
+                    Role         = "ToolResponse",
+                    Content      = """{"success":true}""",
+                    CallId       = callId.ToString(),
+                    ToolName     = "my_tool",
+                    ToolArgsJson = null
+                }
+            ]
+        };
+
+        var context = doc.ToDomain();
+
+        var msg = context.Messages[0];
+        Assert.Equal(Role.ToolResponse, msg.Role);
+        Assert.Equal(callId, msg.CallId);
+        Assert.Equal("my_tool", msg.ToolName);
+        Assert.Null(msg.ToolArgsJson);
+    }
+
+    [Fact]
+    public void FromDomain_MapsProviderMetadataJson_WhenSet()
+    {
+        // Assistant/ToolCall 메시지의 ProviderMetadataJson(thought_signature 직렬화)이 도큐먼트에 저장되는지 확인
+        var context = new ConversationContext
+        {
+            TargetId = 1UL,
+            Messages =
+            [
+                new() { Role = Role.Assistant, Content = "hi", ProviderMetadataJson = """[{"thoughtSignature":"abc"}]""" }
+            ]
+        };
+
+        var doc = ConversationDocument.FromDomain(context);
+
+        Assert.Equal("""[{"thoughtSignature":"abc"}]""", doc.Messages[0].ProviderMetadataJson);
+    }
+
+    [Fact]
+    public void ToDomain_MapsProviderMetadataJson_WhenSet()
+    {
+        // 도큐먼트의 ProviderMetadataJson이 도메인 모델로 복원되는지 확인
+        var doc = new ConversationDocument
+        {
+            Type     = "User",
+            TargetId = "1",
+            Messages =
+            [
+                new ChatMessageDocument
+                {
+                    Role                 = "Assistant",
+                    Content              = "hi",
+                    ProviderMetadataJson = """[{"thoughtSignature":"abc"}]"""
+                }
+            ]
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Equal("""[{"thoughtSignature":"abc"}]""", context.Messages[0].ProviderMetadataJson);
+    }
+
+    [Fact]
+    public void ToDomain_ProviderMetadataJson_IsNullWhenNotInDocument()
+    {
+        // 레거시 문서(ProviderMetadataJson 필드 없음)도 정상 복원됨
+        var doc = new ConversationDocument
+        {
+            Type     = "User",
+            TargetId = "1",
+            Messages = [new ChatMessageDocument { Role = "Assistant", Content = "hi" }]
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Null(context.Messages[0].ProviderMetadataJson);
+    }
+
+    [Fact]
+    public void ToDomain_ToolCallFields_AreNullWhenNotInDocument()
+    {
+        // Tool 전용 필드가 없는 기존 문서도 정상 복원됨 ([BsonIgnoreExtraElements] 동작 검증)
+        var doc = new ConversationDocument
+        {
+            Type     = "User",
+            TargetId = "1",
+            Messages = [new ChatMessageDocument { Role = "User", Content = "hi" }]
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Null(context.Messages[0].CallId);
+        Assert.Null(context.Messages[0].ToolName);
+        Assert.Null(context.Messages[0].ToolArgsJson);
+    }
 }

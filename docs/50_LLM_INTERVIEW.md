@@ -673,5 +673,112 @@ catch (Exception ex)
 | 항목 | 내용 |
 |------|------|
 | `/new-session` 권한 | 초기: 누구나. 차후 Discord Role 기반 권한 제어 예정. |
-| Tool use 복수 응답 | 차후 구현. 현재 `IReadOnlyList<LLMResponse>` 인터페이스로 확장 준비 완료. |
 | Prompt 변경 알림 | 현재: Reload() 전역 적용. 차후: 채널별 재로드 알림 고려 가능. |
+
+---
+
+## 12. LLM Tool Use 설계 (2026-04-23 추가)
+
+### 12.1 개요
+
+LLM이 대화 중 Discord 작업(유저 타임아웃, 채널 멤버 조회 등)을 직접 실행할 수 있도록 함수 호출(Function Calling) 기능을 구현한다.
+
+### 12.2 확정 스펙
+
+| 항목 | 내용 |
+|------|------|
+| 트리거 | 모든 유저가 대화로 트리거 가능. 유저는 툴 존재 모름, LLM이 적절히 판단하여 사용 |
+| 툴 범위 | Guild 채널 메시지에서만 활성화. DM에서는 비활성화(서버 컨텍스트 없음) |
+| Timeout 범위 | `Discord:Tools:TimeoutMinSeconds` ~ `Discord:Tools:TimeoutMaxSeconds` (config 기반) |
+| List channel users | 채널 ViewChannel 권한 보유 멤버 목록. `GuildMembers` Privileged Intent 필요 |
+| 루프 최대 반복 | `LLM:MaxToolIterations` (기본값 5) 초과 시 `InvalidOperationException` |
+
+### 12.3 구현된 툴
+
+#### `discord_timeout_user`
+- **파라미터**: `userId` (string, 필수), `durationSeconds` (integer, 필수), `reason` (string, 선택)
+- **동작**: 지정 유저에게 TimeSpan 타임아웃 적용 (`IGuildUser.SetTimeOutAsync`)
+- **범위 검증**: min/max 초과 시 오류 문자열 반환 (예외 아님 — LLM에 피드백)
+- **봇 권한 필요**: Moderate Members
+
+#### `discord_list_channel_users`
+- **파라미터**: `channelId` (string, 선택. 생략 시 현재 채널)
+- **동작**: 채널 ViewChannel 권한 보유 비봇 멤버 목록 반환 (이름 + ID)
+- **봇 권한 필요**: 없음 (권한 계산은 클라이언트 로컬)
+
+### 12.4 아키텍처
+
+```
+MessageHandler
+  ├── guildId != 0 → tools=[TimeoutUserTool, ListChannelUsersTool], toolContext={guildId, channelId}
+  └── DM           → tools=[], toolContext=null → 툴 비활성화
+
+ILLMProvider.GenerateAsync(messages, tools, toolContext, ct)
+  └── GeminiProvider
+        ├── tools+toolContext 있음 → config.Tools에 FunctionDeclaration 추가
+        └── 함수 호출 루프 (최대 MaxToolIterations 회)
+              ├── StreamAsync → 텍스트/FunctionCalls 누적
+              ├── FunctionCalls 없음 → 최종 LLMResponse 반환
+              └── FunctionCalls 있음
+                    ├── contents에 model FunctionCall 추가
+                    ├── ILLMTool.ExecuteAsync 실행
+                    ├── contents에 user FunctionResponse 추가
+                    └── 재호출
+```
+
+### 12.5 토큰 집계
+
+툴 호출 루프 전체 반복의 토큰 합산 후 단일 `LLMResponse`에 반환:
+- `TokensIn` = 모든 스트리밍 호출의 `PromptTokenCount` 합산
+- `TokensOut` = 모든 스트리밍 호출의 `CandidatesTokenCount` 합산
+
+### 12.6 인프라 요구사항
+
+| 항목 | 설명 |
+|------|------|
+| Gateway Intent | `GatewayIntents.GuildMembers` 추가 (Privileged — Discord Developer Portal 수동 활성화 필요) |
+| 봇 권한 | Moderate Members (타임아웃 실행) |
+| appsettings.json | `Discord:Tools:TimeoutMinSeconds`, `Discord:Tools:TimeoutMaxSeconds`, `LLM:MaxToolIterations` |
+
+### 12.7 버그 수정 기록
+
+#### `ParametersJsonSchema` 타입 오류 (2026-04-23)
+
+**증상**: `Google.GenAI.ClientError: schema at top-level must be a boolean or an object`
+
+**원인**: `FunctionDeclaration.ParametersJsonSchema`가 `object?` 타입임에도 `string`을 전달.  
+`System.Text.Json`은 `string` 값을 JSON string literal `"{ ... }"`로 직렬화 → Gemini API가 top-level에서 object가 아닌 string 수신 → 거부.  
+`.Trim()` 만으로는 해결 불가. 타입 자체가 문제.
+
+**수정**: `JsonSerializer.Deserialize<JsonElement>(schema.Trim())`로 파싱 후 전달.  
+`JsonElement`는 raw JSON object로 직렬화되어 API가 정상 수신.
+
+```csharp
+// Before (잘못됨)
+ParametersJsonSchema = t.Definition.ParametersJsonSchema.Trim()
+
+// After (올바름)
+ParametersJsonSchema = JsonSerializer.Deserialize<JsonElement>(
+    t.Definition.ParametersJsonSchema.Trim())
+```
+
+**위치**: `GeminiProvider.BuildToolDeclarations`
+
+---
+
+### 12.8 신규/수정 파일
+
+| 위치 | 파일 | 설명 |
+|------|------|------|
+| `ArisuBot.Core/Models/` | `LLMToolDefinition.cs` | 툴 정의 record |
+| `ArisuBot.Core/Models/` | `LLMToolExecutionContext.cs` | 툴 실행 컨텍스트 record |
+| `ArisuBot.Core/Interfaces/` | `ILLMTool.cs` | 툴 실행 인터페이스 |
+| `ArisuBot.Discord/Options/` | `DiscordToolOptions.cs` | Timeout min/max 설정 |
+| `ArisuBot.Discord/Tools/` | `TimeoutUserTool.cs` | 유저 타임아웃 툴 |
+| `ArisuBot.Discord/Tools/` | `ListChannelUsersTool.cs` | 채널 멤버 목록 툴 |
+| `ArisuBot.LLM/Gemini/` | `GeminiProvider.cs` | 함수 호출 루프 구현 |
+| `ArisuBot.Core/Interfaces/` | `ILLMProvider.cs` | tools/toolContext 파라미터 추가 |
+| `ArisuBot.LLM/Options/` | `LLMOptions.cs` | `MaxToolIterations` 추가 |
+| `ArisuBot.Discord/Handlers/` | `MessageHandler.cs` | `IEnumerable<ILLMTool>` 주입, toolContext 생성 |
+| `ArisuBot.Host/` | `Program.cs` | 툴 DI 등록, GuildMembers intent |
+| `ArisuBot.Host/` | `appsettings.json` | Discord:Tools, LLM:MaxToolIterations |

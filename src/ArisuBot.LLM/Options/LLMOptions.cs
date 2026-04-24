@@ -13,4 +13,7 @@ public class LLMOptions
 
     /// <summary>생성 온도. 0.0–1.0.</summary>
     public float Temperature { get; set; } = 0.7f;
+
+    /// <summary>툴 호출 루프 최대 반복 횟수. 무한 루프 방지.</summary>
+    public int MaxToolIterations { get; set; } = 5;
 }

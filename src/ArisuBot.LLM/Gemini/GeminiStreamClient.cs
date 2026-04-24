@@ -19,4 +19,9 @@ public class GeminiStreamClient : IGeminiStreamClient
     public IAsyncEnumerable<GenerateContentResponse> StreamAsync(
         string model, IEnumerable<Content> contents, GenerateContentConfig config)
         => _client.Models.GenerateContentStreamAsync(model, contents.ToList(), config);
+
+    /// <summary>스트리밍 전 토큰 수 집계. 디버그 로그용.</summary>
+    public Task<CountTokensResponse> CountTokensAsync(
+        string model, List<Content> contents, CountTokensConfig config, CancellationToken ct = default)
+        => _client.Models.CountTokensAsync(model, contents, config, ct);
 }

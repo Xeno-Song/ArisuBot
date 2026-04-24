@@ -159,27 +159,51 @@ public interface IAIMessageLogger
 
 `ConversationService`는 컨텍스트 관리만 담당한다. LLM 호출과 로깅은 Handler(오케스트레이터)가 직접 수행한다.
 
-> **구현 상태**: `MessageHandler`의 LLM 연동 (ConversationService + ILLMProvider 호출) 미구현. Discord 레이어 구조만 완성. LLM Provider 구현 완료 후 연동 예정.
+### 일반 텍스트 응답 흐름
 
 ```
 Discord Event
      │
      ▼
-[MessageHandler / SlashCommandHandler]  ← 오케스트레이터 역할
+[MessageHandler]  ← 오케스트레이터 역할
      │
-     ├─ 채널 Config 확인 (ShouldRespond)
+     ├─ 채널 Config 확인 (ShouldRespond) / DM whitelist 확인
+     ├─ ConversationService.GetContextAsync()
+     ├─ ConversationService.BuildMessageList()
      │
-     ├─ [미구현] ConversationService.GetContextAsync()
-     ├─ [미구현] ConversationService.BuildMessageList()
+     ├─ ILLMProvider.GenerateAsync(messages, tools, toolContext)
      │
-     ├─ [미구현] ILLMProvider.GenerateAsync()
-     │
-     ├─ [미구현] ConversationService.AppendMessageAsync() × 2
-     ├─ [미구현] IAIMessageLogger.LogAsync()
+     ├─ ConversationService.AppendMessageAsync() × 2
+     ├─ IAIMessageLogger.LogAsync()
      │
      ▼
-Discord 채널에 응답 전송
+Discord 채널에 응답 전송 (2000자 청크 분할)
 ```
+
+### Tool Use (함수 호출) 흐름
+
+Guild 채널 메시지 시 tools + toolContext를 GenerateAsync에 전달한다. DM은 toolContext=null이므로 툴 비활성화.
+
+```
+MessageHandler
+  └─ GeminiProvider.GenerateAsync(messages, tools, toolContext)
+       │
+       └─ [루프: 최대 MaxToolIterations 회]
+             ├─ StreamAsync(model, contents, config{Tools}) → 스트리밍 응답 누적
+             ├─ FunctionCalls 없음 → LLMResponse 반환 (루프 종료)
+             └─ FunctionCalls 있음
+                  ├─ contents에 model FunctionCall 추가
+                  ├─ ILLMTool.ExecuteAsync(args, {guildId, channelId}) → 결과 문자열
+                  ├─ contents에 user FunctionResponse 추가
+                  └─ 다음 반복 (재호출)
+```
+
+### 구현된 LLM 툴
+
+| 툴 이름 | 클래스 | 설명 |
+|---------|--------|------|
+| `discord_timeout_user` | `TimeoutUserTool` | 유저 타임아웃 적용 |
+| `discord_list_channel_users` | `ListChannelUsersTool` | 채널 접근 권한 멤버 목록 |
 
 ---
 

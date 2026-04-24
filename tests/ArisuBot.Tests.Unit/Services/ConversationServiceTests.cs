@@ -132,6 +132,14 @@ public class ConversationServiceTests
     }
 
     [Fact]
+    public async Task GetContextAsync_InvalidContextType_ThrowsArgumentOutOfRangeException()
+    {
+        // 정의되지 않은 ContextType 값은 ArgumentOutOfRangeException 발생
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            _sut.GetContextAsync(1ul, (ContextType)999));
+    }
+
+    [Fact]
     public async Task AppendTokenUsageAsync_AddsUsageAndCallsSaveContext()
     {
         var context = new ConversationContext { Type = ContextType.Channel };

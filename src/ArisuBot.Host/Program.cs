@@ -5,6 +5,7 @@ using ArisuBot.Discord;
 using ArisuBot.Discord.Handlers;
 using ArisuBot.Discord.Options;
 using ArisuBot.Discord.Services;
+using ArisuBot.Discord.Tools;
 using ArisuBot.Infrastructure.MongoDB;
 using ArisuBot.Infrastructure.Options;
 using ArisuBot.Infrastructure.Prompts;
@@ -39,6 +40,7 @@ var host = Host.CreateDefaultBuilder(args)
 
         // Options 바인딩
         services.Configure<DiscordOptions>(config.GetSection(DiscordOptions.SectionName));
+        services.Configure<DiscordToolOptions>(config.GetSection(DiscordToolOptions.SectionName));
         services.Configure<MongoDbOptions>(config.GetSection(MongoDbOptions.SectionName));
         services.Configure<MemoryOptions>(config.GetSection(MemoryOptions.SectionName));
 
@@ -63,12 +65,13 @@ var host = Host.CreateDefaultBuilder(args)
         // LLM
         services.AddLLMProvider(config);
 
-        // Discord — MessageContent intent: 개발자 포털에서 수동 활성화 필요
+        // Discord — MessageContent, GuildMembers: 개발자 포털에서 Privileged Intents 수동 활성화 필요
         services.AddSingleton(new DiscordSocketClient(new DiscordSocketConfig
         {
             GatewayIntents = GatewayIntents.Guilds
                            | GatewayIntents.GuildMessages
                            | GatewayIntents.MessageContent
+                           | GatewayIntents.GuildMembers   // ListChannelUsersTool에서 서버 전체 멤버 조회 필요
         }));
         services.AddSingleton(sp =>
         {
@@ -81,6 +84,9 @@ var host = Host.CreateDefaultBuilder(args)
         // IDiscordClient: AdminNotifier 주입용 (DiscordSocketClient가 구현)
         services.AddSingleton<IDiscordClient>(sp => sp.GetRequiredService<DiscordSocketClient>());
         services.AddSingleton<IAdminNotifier, AdminNotifier>();
+        // LLM 툴 등록 — IEnumerable<ILLMTool>로 MessageHandler에 주입됨
+        services.AddSingleton<ILLMTool, TimeoutUserTool>();
+        services.AddSingleton<ILLMTool, ListChannelUsersTool>();
         services.AddSingleton<MessageHandler>();
         services.AddSingleton<SlashCommandHandler>();
         services.AddHostedService<BotClient>();

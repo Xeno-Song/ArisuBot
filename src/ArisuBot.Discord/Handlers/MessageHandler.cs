@@ -20,6 +20,7 @@ public class MessageHandler
     private readonly MessageListenerOptions _listenerOptions;
     private readonly ConversationService _conversationService;
     private readonly ILLMProvider _llmProvider;
+    private readonly IReadOnlyList<ILLMTool> _tools;
     private readonly IAIMessageLogger _messageLogger;
     private readonly IAdminNotifier _adminNotifier;
     private readonly IPromptLoader _promptLoader;
@@ -35,6 +36,7 @@ public class MessageHandler
         IOptions<DiscordOptions> options,
         ConversationService conversationService,
         ILLMProvider llmProvider,
+        IEnumerable<ILLMTool> tools,
         IAIMessageLogger messageLogger,
         IAdminNotifier adminNotifier,
         IPromptLoader promptLoader,
@@ -45,6 +47,7 @@ public class MessageHandler
         _listenerOptions = options.Value.MessageListener;
         _conversationService = conversationService;
         _llmProvider = llmProvider;
+        _tools = tools.ToList();
         _messageLogger = messageLogger;
         _adminNotifier = adminNotifier;
         _promptLoader = promptLoader;
@@ -93,6 +96,9 @@ public class MessageHandler
             return;
         }
 
+        _logger.LogDebug("메시지 수신 처리 — messageId={MessageId} userId={UserId} channelId={ChannelId} contextType={ContextType}",
+            userMessage.Id, userMessage.Author.Id, userMessage.Channel.Id, contextType);
+
         await userMessage.Channel.TriggerTypingAsync();
 
         try
@@ -121,21 +127,57 @@ public class MessageHandler
             // 유저 메시지를 DB에 저장 (BuildMessageList 호출 후 저장으로 중복 방지, Participants도 함께 저장됨)
             await _conversationService.AppendMessageAsync(context, newMessage);
 
-            var responses = await _llmProvider.GenerateAsync(messages);
+            // Guild 채널에서만 툴 활성화 — DM은 서버 컨텍스트가 없으므로 툴 비활성화
+            var toolContext = guildId != 0
+                ? new LLMToolExecutionContext(guildId, userMessage.Channel.Id)
+                : null;
+
+            _logger.LogInformation(
+                "LLM 호출 시작 — channelId={ChannelId} userId={UserId} toolsEnabled={ToolsEnabled} messageCount={MessageCount}",
+                userMessage.Channel.Id, userMessage.Author.Id, toolContext is not null, messages.Count);
+
+            // 멘션 응답이면 reply, 일반이면 일반 메시지
+            MessageReference? reference = isMention ? new MessageReference(userMessage.Id) : null;
+            var responses = new List<LLMResponse>();
+
+            // 응답이 완성된 순서대로 즉시 Discord 전송 — 툴 실행 중간 텍스트도 지체 없이 전달
+            await foreach (var response in _llmProvider.GenerateAsync(messages, _tools, toolContext))
+            {
+                responses.Add(response);
+
+                // 각 응답의 Tool 이력 즉시 저장 — AssistantMessage 앞 순서 보장
+                foreach (var toolMsg in response.ToolCallHistory)
+                    await _conversationService.AppendMessageAsync(context, toolMsg);
+
+                // Discord 즉시 전송 — <<name>>을 <@userId>로 치환
+                foreach (var chunk in SplitIntoChunks(ReplaceMentions(response.Content, context.Participants)))
+                    await userMessage.Channel.SendMessageAsync(chunk, messageReference: reference);
+            }
+
+            _logger.LogInformation(
+                "LLM 호출 완료 — tokensIn={TokensIn} tokensOut={TokensOut} responseLength={ResponseLength}",
+                responses.Sum(r => r.TokensIn), responses.Sum(r => r.TokensOut),
+                responses.Sum(r => r.Content.Length));
 
             // 전체 응답 합산 — DB 저장 및 로그용
             var combinedContent = string.Join("\n", responses.Select(r => r.Content));
             var providerName = responses.FirstOrDefault()?.ProviderName ?? _llmProvider.ProviderName;
 
             // DB에는 LLM 원본 출력(<<name>> 형태) 저장 — 히스토리에서 LLM이 동일 패턴 유지하도록
+            // ProviderMetadataJson(thought_signature 등): 마지막 응답에서 추출 — BuildContents에서 model Content로 복원해 cache hit 유지
             await _conversationService.AppendMessageAsync(context,
-                new ChatMessage { Role = Role.Assistant, Content = combinedContent });
+                new ChatMessage
+                {
+                    Role                 = Role.Assistant,
+                    Content              = combinedContent,
+                    ProviderMetadataJson = responses.LastOrDefault()?.ProviderMetadataJson
+                });
 
             // 복수 응답의 토큰 합산 후 컨텍스트에 저장
             await _conversationService.AppendTokenUsageAsync(context, new TokenUsage
             {
-                TokensIn      = responses.Sum(r => r.TokensIn),
-                TokensOut     = responses.Sum(r => r.TokensOut),
+                TokensIn       = responses.Sum(r => r.TokensIn),
+                TokensOut      = responses.Sum(r => r.TokensOut),
                 TokensCachedIn = responses.Sum(r => r.TokensCachedIn)
             });
 
@@ -144,21 +186,10 @@ public class MessageHandler
             await _messageLogger.LogAsync(
                 guildId, targetId, userMessage.Author.Id,
                 userMessage.Content, processedContent, providerName);
-
-            // 멘션 응답이면 전체 세트 reply, 일반이면 전체 세트 일반 메시지
-            MessageReference? reference = isMention ? new MessageReference(userMessage.Id) : null;
-            foreach (var response in responses)
-            {
-                // Discord 전송 시 <<name>>을 <@userId>로 치환
-                foreach (var chunk in SplitIntoChunks(ReplaceMentions(response.Content, context.Participants)))
-                {
-                    await userMessage.Channel.SendMessageAsync(chunk, messageReference: reference);
-                }
-            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LLM 호출 실패 — channelId={ChannelId} userId={UserId}",
+            _logger.LogError(ex, "메시지 처리 실패 — channelId={ChannelId} userId={UserId}",
                 userMessage.Channel.Id, userMessage.Author.Id);
 
             await _adminNotifier.NotifyAsync(

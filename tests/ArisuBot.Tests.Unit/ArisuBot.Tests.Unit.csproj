@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\ArisuBot.LLM\ArisuBot.LLM.csproj" />
     <ProjectReference Include="..\..\src\ArisuBot.Discord\ArisuBot.Discord.csproj" />
     <ProjectReference Include="..\..\src\ArisuBot.Infrastructure\ArisuBot.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\ArisuBot.Monitor\ArisuBot.Monitor.csproj" />
   </ItemGroup>
 
 </Project>

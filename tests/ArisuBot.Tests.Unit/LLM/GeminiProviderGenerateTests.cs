@@ -1,6 +1,7 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
+using ArisuBot.LLM.Monitoring;
 using ArisuBot.LLM.Options;
 using Google.GenAI.Types;
 using Microsoft.Extensions.Logging;
@@ -12,13 +13,14 @@ namespace ArisuBot.Tests.Unit.LLM;
 public class GeminiProviderGenerateTests
 {
     private readonly Mock<IGeminiStreamClient> _streamMock = new();
+    private readonly Mock<ILlmMonitorServer> _pipeMock = new();
     private readonly GeminiProvider _sut;
 
     public GeminiProviderGenerateTests()
     {
         var geminiOpts = Options.Create(new GeminiOptions { Model = "test-model", ApiKey = "key" });
         var llmOpts = Options.Create(new LLMOptions { MaxTokens = 100, Temperature = 0.5f });
-        _sut = new GeminiProvider(_streamMock.Object, geminiOpts, llmOpts,
+        _sut = new GeminiProvider(_streamMock.Object, _pipeMock.Object, geminiOpts, llmOpts,
             new Mock<ILogger<GeminiProvider>>().Object);
     }
 
@@ -643,5 +645,23 @@ public class GeminiProviderGenerateTests
 
         var single = Assert.Single(merged);
         Assert.Equal("[고개를 끄덕이며] 네, 좋아요", single.Text);
+    }
+
+    // --- ILlmMonitorServer emit 검증 ---
+
+    [Fact]
+    public async Task GenerateAsync_EmitsTokenUsageEvent_OnCompletion()
+    {
+        // 응답 완료 시 contextId + 토큰 수를 담은 TokenUsageEvent가 emit되어야 함
+        _streamMock.Setup(s => s.StreamAsync(
+                It.IsAny<string>(), It.IsAny<IEnumerable<Content>>(), It.IsAny<GenerateContentConfig>()))
+            .Returns(ToAsyncEnumerable(MakeChunk("hello", promptTokens: 50, candidateTokens: 20)));
+
+        await CollectAsync(_sut.GenerateAsync(
+            [new ChatMessage { Role = Role.User, Content = "hi" }],
+            contextId: "ctx-123"));
+
+        _pipeMock.Verify(p => p.Emit(It.Is<TokenUsageEvent>(e =>
+            e.ContextId == "ctx-123" && e.TokensIn == 50 && e.TokensOut == 20)), Times.Once);
     }
 }

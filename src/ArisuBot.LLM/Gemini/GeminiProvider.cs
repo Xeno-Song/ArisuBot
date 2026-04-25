@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
+using ArisuBot.LLM.Monitoring;
 using ArisuBot.LLM.Options;
 using Google.GenAI;
 using Google.GenAI.Types;
@@ -15,6 +16,7 @@ namespace ArisuBot.LLM.Gemini;
 public class GeminiProvider : ILLMProvider
 {
     private readonly IGeminiStreamClient _streamClient;
+    private readonly ILlmMonitorServer _pipeServer;
     private readonly GeminiOptions _geminiOptions;
     private readonly LLMOptions _llmOptions;
     private readonly ILogger<GeminiProvider> _logger;
@@ -23,11 +25,13 @@ public class GeminiProvider : ILLMProvider
 
     public GeminiProvider(
         IGeminiStreamClient streamClient,
+        ILlmMonitorServer pipeServer,
         IOptions<GeminiOptions> geminiOptions,
         IOptions<LLMOptions> llmOptions,
         ILogger<GeminiProvider> logger)
     {
         _streamClient   = streamClient;
+        _pipeServer     = pipeServer;
         _geminiOptions  = geminiOptions.Value;
         _llmOptions     = llmOptions.Value;
         _logger         = logger;
@@ -45,6 +49,7 @@ public class GeminiProvider : ILLMProvider
         IReadOnlyList<ILLMTool>? tools = null,
         LLMToolExecutionContext? toolContext = null,
         CacheHint? cacheHint = null,
+        string? contextId = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var messageList = messages.ToList();
@@ -173,6 +178,9 @@ public class GeminiProvider : ILLMProvider
                     _logger.LogWarning(ex,
                         "Fallback 모델 전환 — from={Primary} to={Fallback}",
                         currentModel, _geminiOptions.FallbackModel);
+                    _pipeServer.Emit(new ModelStatusEvent(
+                        CurrentModel:  _geminiOptions.FallbackModel,
+                        PreviousModel: currentModel));
                     currentModel = _geminiOptions.FallbackModel;
                     config.CachedContent = null; // fallback은 no-cache로 진행
                     retries = 0;
@@ -204,6 +212,13 @@ public class GeminiProvider : ILLMProvider
                     "LLM 응답 완료 — tokensIn={TokensIn} tokensOut={TokensOut} tokensCached={TokensCached} textLength={TextLength}",
                     yieldTokensIn, yieldTokensOut, yieldTokensCached, sb.Length);
 
+                _pipeServer.Emit(new TokenUsageEvent(
+                    ContextId:    contextId,
+                    TokensIn:     yieldTokensIn,
+                    TokensOut:    yieldTokensOut,
+                    TokensCached: yieldTokensCached,
+                    Model:        currentModel));
+
                 yield return new LLMResponse
                 {
                     Content              = sb.ToString(),
@@ -224,6 +239,12 @@ public class GeminiProvider : ILLMProvider
             if (sb.Length > 0)
             {
                 _logger.LogInformation("중간 텍스트 응답 전송 — textLength={TextLength}", sb.Length);
+                _pipeServer.Emit(new TokenUsageEvent(
+                    ContextId:    contextId,
+                    TokensIn:     yieldTokensIn,
+                    TokensOut:    yieldTokensOut,
+                    TokensCached: yieldTokensCached,
+                    Model:        currentModel));
                 yield return new LLMResponse
                 {
                     Content         = sb.ToString(),

@@ -150,7 +150,7 @@ public class MessageHandler
             var responses = new List<LLMResponse>();
 
             // 응답이 완성된 순서대로 즉시 Discord 전송 — 툴 실행 중간 텍스트도 지체 없이 전달
-            await foreach (var response in _llmProvider.GenerateAsync(messages, _tools, toolContext, cacheHint))
+            await foreach (var response in _llmProvider.GenerateAsync(messages, _tools, toolContext, cacheHint, context.Id))
             {
                 responses.Add(response);
 

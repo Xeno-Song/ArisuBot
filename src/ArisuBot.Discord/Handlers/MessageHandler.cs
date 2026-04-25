@@ -26,7 +26,8 @@ public class MessageHandler
     private readonly IAIMessageLogger _messageLogger;
     private readonly IAdminNotifier _adminNotifier;
     private readonly IPromptLoader _promptLoader;
-    private readonly CompactionOptions _compactionOptions;
+    private readonly ICompactionService _compactionService;
+    private readonly CompactionTriggerEvaluator _triggerEvaluator;
     private readonly ILogger<MessageHandler> _logger;
 
     // Session Resume 등으로 인한 동일 메시지 중복 처리 방지
@@ -44,7 +45,8 @@ public class MessageHandler
         IAIMessageLogger messageLogger,
         IAdminNotifier adminNotifier,
         IPromptLoader promptLoader,
-        IOptions<CompactionOptions> compactionOptions,
+        ICompactionService compactionService,
+        CompactionTriggerEvaluator triggerEvaluator,
         ILogger<MessageHandler> logger)
     {
         _client              = client;
@@ -57,7 +59,8 @@ public class MessageHandler
         _messageLogger       = messageLogger;
         _adminNotifier       = adminNotifier;
         _promptLoader        = promptLoader;
-        _compactionOptions   = compactionOptions.Value;
+        _compactionService   = compactionService;
+        _triggerEvaluator    = triggerEvaluator;
         _logger              = logger;
     }
 
@@ -207,9 +210,23 @@ public class MessageHandler
                 guildId, targetId, userMessage.Author.Id,
                 userMessage.Content, processedContent, providerName);
 
-            // [EXPERIMENT] Compaction trigger — log only, no side effects
-            if (_compactionOptions.Enabled && context.LastTotalTokens >= _compactionOptions.TokenThreshold)
-                await RunCompactionExperimentAsync(context, CancellationToken.None);
+            // Compaction 트리거 평가 — token 기반 트리거만 인라인 처리 (inactivity/scheduled는 BackgroundService)
+            if (_triggerEvaluator.IsTokenThresholdMet(context) &&
+                _triggerEvaluator.ShouldCompact(context))
+            {
+                // 비동기 fire-and-forget — 메시지 응답 지연 없이 백그라운드에서 실행
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _compactionService.RunAsync(context, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Compaction 실행 실패 — contextId={Id}", context.Id);
+                    }
+                });
+            }
         }
         catch (OperationCanceledException)
         {
@@ -261,29 +278,5 @@ public class MessageHandler
         if (string.IsNullOrEmpty(text)) yield break;
         for (var i = 0; i < text.Length; i += maxLength)
             yield return text.Substring(i, Math.Min(maxLength, text.Length - i));
-    }
-
-    /// <summary>
-    /// [EXPERIMENT] 기존 대화 컨텍스트에 compaction trigger를 append해 LLM 추출 결과를 로깅한다.
-    /// DB 변경 없음. Compaction 접근 방식 품질 검증 목적.
-    /// </summary>
-    private async Task RunCompactionExperimentAsync(ConversationContext context, CancellationToken ct)
-    {
-        _logger.LogInformation(
-            "[COMPACTION EXPERIMENT] trigger — contextId={Id} totalTokens={Tokens} msgCount={Count}",
-            context.Id, context.LastTotalTokens, context.Messages.Count);
-
-        // 기존 메시지 전체 + compaction trigger User 메시지 append
-        var messages = context.Messages
-            .Append(new ChatMessage { Role = Role.User, Content = _promptLoader.CompactionPrompt })
-            .ToList();
-
-        var sb = new System.Text.StringBuilder();
-        await foreach (var response in _llmProvider.GenerateAsync(messages, ct: ct))
-            sb.Append(response.Content);
-
-        _logger.LogInformation(
-            "[COMPACTION EXPERIMENT] result — contextId={Id}\n{Result}",
-            context.Id, sb.ToString());
     }
 }

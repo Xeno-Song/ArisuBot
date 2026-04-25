@@ -6,6 +6,7 @@ using ArisuBot.Discord.Handlers;
 using ArisuBot.Discord.Options;
 using ArisuBot.Discord.Services;
 using ArisuBot.Discord.Tools;
+using ArisuBot.Host.BackgroundServices;
 using ArisuBot.Infrastructure.MongoDB;
 using ArisuBot.Infrastructure.Options;
 using ArisuBot.Infrastructure.Prompts;
@@ -62,6 +63,8 @@ var host = Host.CreateDefaultBuilder(args)
 
         // Core
         services.AddSingleton<ConversationService>();
+        services.AddSingleton<CompactionTriggerEvaluator>();
+        services.AddSingleton<ICompactionService, CompactionService>();
 
         // LLM
         services.AddLLMProvider(config);
@@ -91,6 +94,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<MessageHandler>();
         services.AddSingleton<SlashCommandHandler>();
         services.AddHostedService<BotClient>();
+        services.AddHostedService<CompactionBackgroundService>();
     })
     .Build();
 

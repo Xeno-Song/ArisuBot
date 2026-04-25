@@ -61,11 +61,13 @@ System/Persona 등 기존 systemInstruction은 교체하지 않는다.
 
 ## 실험 결과
 
-> 실험 후 업데이트 예정.
+- JSON 형식: 유효한 JSON 정상 반환 ✅
+- Persona 영향: facts/summary에 캐릭터 말투 유입 없음 ✅
+- 추출 품질: 의미 있는 사실 추출, 잡담 필터링 ✅
+- enriched schema (facts+summary 동시 추출) 검증 완료 ✅
+
+결론: **품질 충분** → 정식 구현 진행.
 
 ## 다음 단계
 
-실험 결과에 따라:
-- **품질 충분**: Compaction 전체 구현 진행 (새 session 생성, DB 저장, 주입)
-- **Persona 방해 심함**: `responseSchema` 강제 JSON 출력 방식 추가 검토
-- **품질 불충분**: systemInstruction 교체 방식(별도 LLM 호출) 으로 전환
+실험 완료. 정식 Compaction 구현은 `docs/61_COMPACTION_PLAN.md` 참조.

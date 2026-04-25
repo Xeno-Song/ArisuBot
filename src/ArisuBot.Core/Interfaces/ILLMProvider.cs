@@ -18,6 +18,7 @@ public interface ILLMProvider
     /// <param name="toolContext">툴 실행 컨텍스트 (GuildId, ChannelId). null이면 툴 비활성화.</param>
     /// <param name="cacheHint">명시적 캐시 정보. null이면 캐시 없이 전체 컨텍스트 전송. 캐시 미지원 provider는 무시.</param>
     /// <param name="contextId">Monitor Sidecar에 전달할 대화 컨텍스트 ID (MongoDB doc ID). null이면 TOKEN_USAGE 이벤트에 contextId 없음.</param>
+    /// <param name="responseSchema">구조화 출력 강제 시 JSON Schema 문자열. null이면 자유 텍스트 출력.</param>
     /// <param name="ct">취소 토큰.</param>
     IAsyncEnumerable<LLMResponse> GenerateAsync(
         IEnumerable<ChatMessage> messages,
@@ -25,5 +26,6 @@ public interface ILLMProvider
         LLMToolExecutionContext? toolContext = null,
         CacheHint? cacheHint = null,
         string? contextId = null,
+        string? responseSchema = null,
         CancellationToken ct = default);
 }

@@ -316,4 +316,66 @@ public class ConversationDocumentMappingTests
         Assert.Null(context.Messages[0].ToolName);
         Assert.Null(context.Messages[0].ToolArgsJson);
     }
+
+    // --- Compaction 필드 매핑 ---
+
+    [Fact]
+    public void FromDomain_MapsCompactionFields_WhenSet()
+    {
+        var compactedAt = new DateTime(2026, 4, 25, 3, 0, 0, DateTimeKind.Utc);
+        var context = new ConversationContext
+        {
+            TargetId          = 1UL,
+            CompactionSummary = "test summary",
+            CompactionFacts   =
+            [
+                new CompactionFact { Content = "Alice likes cats", Subject = "Alice", Category = "preference" }
+            ],
+            LastCompactedAt = compactedAt
+        };
+
+        var doc = ConversationDocument.FromDomain(context);
+
+        Assert.Equal("test summary", doc.CompactionSummary);
+        Assert.NotNull(doc.CompactionFactsJson);
+        Assert.Contains("Alice likes cats", doc.CompactionFactsJson);
+        Assert.Equal(compactedAt, doc.LastCompactedAt);
+    }
+
+    [Fact]
+    public void ToDomain_MapsCompactionFields_WhenSet()
+    {
+        var compactedAt = new DateTime(2026, 4, 25, 3, 0, 0, DateTimeKind.Utc);
+        var doc = new ConversationDocument
+        {
+            Type              = "Channel",
+            TargetId          = "1",
+            CompactionSummary = "summary text",
+            CompactionFactsJson = """[{"content":"f1","subject":"Alice","category":"event"}]""",
+            LastCompactedAt   = compactedAt
+        };
+
+        var context = doc.ToDomain();
+
+        Assert.Equal("summary text", context.CompactionSummary);
+        Assert.NotNull(context.CompactionFacts);
+        Assert.Single(context.CompactionFacts!);
+        Assert.Equal("f1", context.CompactionFacts[0].Content);
+        Assert.Equal("Alice", context.CompactionFacts[0].Subject);
+        Assert.Equal("event", context.CompactionFacts[0].Category);
+        Assert.Equal(compactedAt, context.LastCompactedAt);
+    }
+
+    [Fact]
+    public void ToDomain_CompactionFields_AreNullWhenNotInDocument()
+    {
+        // 기존 도큐먼트(Compaction 필드 없음)도 정상 복원됨 ([BsonIgnoreIfNull] 동작 검증)
+        var doc = new ConversationDocument { Type = "User", TargetId = "1" };
+
+        var context = doc.ToDomain();
+
+        Assert.Null(context.CompactionSummary);
+        Assert.Null(context.CompactionFacts);
+        Assert.Null(context.LastCompactedAt);
+    }
 }

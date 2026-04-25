@@ -1,6 +1,7 @@
 using ArisuBot.Core.Models;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using System.Text.Json;
 
 namespace ArisuBot.Infrastructure.MongoDB.Documents;
 
@@ -60,6 +61,23 @@ public class ConversationDocument
     [BsonElement("lastTotalTokens")]
     public int LastTotalTokens { get; set; }
 
+    // --- Compaction 결과 저장 ---
+
+    /// <summary>Compaction 실행으로 추출된 대화 요약. 기존 문서에 없으면 null.</summary>
+    [BsonElement("compactionSummary")]
+    [BsonIgnoreIfNull]
+    public string? CompactionSummary { get; set; }
+
+    /// <summary>Compaction 실행으로 추출된 사실 목록 (JSON 직렬화). 기존 문서에 없으면 null.</summary>
+    [BsonElement("compactionFactsJson")]
+    [BsonIgnoreIfNull]
+    public string? CompactionFactsJson { get; set; }
+
+    /// <summary>마지막 Compaction 실행 시각 (UTC). 기존 문서에 없으면 null.</summary>
+    [BsonElement("lastCompactedAt")]
+    [BsonIgnoreIfNull]
+    public DateTime? LastCompactedAt { get; set; }
+
     /// <summary>도메인 모델로 변환.</summary>
     public ConversationContext ToDomain() => new()
     {
@@ -77,7 +95,14 @@ public class ConversationDocument
         LastTotalTokens            = LastTotalTokens,
         RecentMessageTimestamps    = RecentMessageTimestamps
             .Select(dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)))
-            .ToList()
+            .ToList(),
+        CompactionSummary = CompactionSummary,
+        CompactionFacts   = CompactionFactsJson is not null
+            ? JsonSerializer.Deserialize<List<CompactionFact>>(CompactionFactsJson)
+            : null,
+        LastCompactedAt   = LastCompactedAt.HasValue
+            ? DateTime.SpecifyKind(LastCompactedAt.Value, DateTimeKind.Utc)
+            : null
     };
 
     /// <summary>도메인 모델에서 도큐먼트 생성.</summary>
@@ -98,7 +123,12 @@ public class ConversationDocument
         LastTotalTokens         = context.LastTotalTokens,
         RecentMessageTimestamps = context.RecentMessageTimestamps
             .Select(dto => dto.UtcDateTime)
-            .ToList()
+            .ToList(),
+        CompactionSummary  = context.CompactionSummary,
+        CompactionFactsJson = context.CompactionFacts is not null
+            ? JsonSerializer.Serialize(context.CompactionFacts)
+            : null,
+        LastCompactedAt    = context.LastCompactedAt
     };
 }
 

@@ -1,6 +1,7 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.Infrastructure.MongoDB.Documents;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace ArisuBot.Infrastructure.MongoDB;
@@ -95,6 +96,51 @@ public class ConversationRepository : IConversationRepository
                 .Set(d => d.UncachedTokenCount, doc.LastTotalTokens);
             await _collection.UpdateOneAsync(docFilter, update, cancellationToken: ct);
         }
+    }
+
+    /// <summary>MongoDB ObjectId로 특정 세션 도큐먼트를 조회한다. 없으면 null 반환.</summary>
+    public async Task<ConversationContext?> GetContextByIdAsync(string id, CancellationToken ct = default)
+    {
+        var filter = Builders<ConversationDocument>.Filter.Eq(d => d.Id, id);
+        var document = await _collection.Find(filter).FirstOrDefaultAsync(ct);
+        return document?.ToDomain();
+    }
+
+    /// <summary>type/targetId 기준으로 모든 세션을 생성 시각 오름차순으로 반환한다.</summary>
+    public async Task<List<ConversationContext>> GetAllSessionsAsync(
+        ContextType type, ulong targetId, CancellationToken ct = default)
+    {
+        var filter = BuildFilter(targetId.ToString(), type);
+        var documents = await _collection
+            .Find(filter)
+            .SortBy(d => d.CreatedAt)
+            .ToListAsync(ct);
+        return documents.Select(d => d.ToDomain()).ToList();
+    }
+
+    /// <summary>
+    /// 각 targetId+type 조합의 가장 최신 세션(active session)을 전부 반환한다.
+    /// BackgroundService가 Inactivity / Scheduled 트리거 평가에 사용한다.
+    /// </summary>
+    public async Task<List<ConversationContext>> GetAllActiveContextsAsync(CancellationToken ct = default)
+    {
+        // MongoDB aggregation: 각 (targetId, type) 그룹에서 createdAt 최신 도큐먼트 1개만 추출
+        var pipeline = new[]
+        {
+            new BsonDocument("$sort",  new BsonDocument("createdAt", -1)),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id",  new BsonDocument { { "targetId", "$targetId" }, { "type", "$type" } } },
+                { "doc",  new BsonDocument("$first", "$$ROOT") }
+            }),
+            new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$doc"))
+        };
+
+        var documents = await _collection
+            .Aggregate<ConversationDocument>(pipeline, cancellationToken: ct)
+            .ToListAsync(ct);
+
+        return documents.Select(d => d.ToDomain()).ToList();
     }
 
     private static FilterDefinition<ConversationDocument> BuildFilter(string targetId, ContextType type) =>

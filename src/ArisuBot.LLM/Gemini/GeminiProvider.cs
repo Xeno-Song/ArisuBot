@@ -50,6 +50,7 @@ public class GeminiProvider : ILLMProvider
         LLMToolExecutionContext? toolContext = null,
         CacheHint? cacheHint = null,
         string? contextId = null,
+        string? responseSchema = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var messageList = messages.ToList();
@@ -60,6 +61,13 @@ public class GeminiProvider : ILLMProvider
             MaxOutputTokens = _llmOptions.MaxTokens,
             Temperature     = _llmOptions.Temperature,
         };
+
+        // responseSchema가 제공되면 구조화 출력 강제 — ResponseJsonSchema는 JSON Schema 직접 수용
+        if (responseSchema is not null)
+        {
+            config.ResponseMimeType  = "application/json";
+            config.ResponseJsonSchema = JsonSerializer.Deserialize<JsonElement>(responseSchema);
+        }
 
         if (cacheHint != null)
         {

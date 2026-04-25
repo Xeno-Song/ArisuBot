@@ -30,6 +30,17 @@ public class ConversationContext
 
     /// <summary>마지막 LLM 응답의 총 토큰 수 (tokensIn + tokensOut). 재시작 후 UncachedTokenCount 복원 기준값으로 사용.</summary>
     public int LastTotalTokens { get; set; }
+
+    // --- Compaction 결과 저장 ---
+
+    /// <summary>Compaction 실행으로 추출된 대화 요약. 새 세션 시작 시 Assistant 메시지로 주입.</summary>
+    public string? CompactionSummary { get; set; }
+
+    /// <summary>Compaction 실행으로 추출된 사실 목록.</summary>
+    public List<CompactionFact>? CompactionFacts { get; set; }
+
+    /// <summary>마지막 Compaction 실행 시각 (UTC). Cooldown 및 중복 실행 방지에 사용.</summary>
+    public DateTime? LastCompactedAt { get; set; }
 }
 
 /// <summary>컨텍스트 범위 구분.</summary>

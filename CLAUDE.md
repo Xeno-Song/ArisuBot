@@ -14,7 +14,12 @@
    - **테스트 코드 추가 방법**: what tests to add, which paths to cover, and how
    - **문서 수정 계획**: which docs files to update and what to record
 4. You SHOULD write work history in related document which in `docs` directory about that you work.
-5. You CANNOT decide or estimate any functional specification or work. You MUST request question to user to decide ambiguous things.
+5. You MUST create a git commit at each of the following checkpoints:
+   - When a single feature implementation is complete (all code + tests passing).
+   - When a Phase or Step defined in the plan is fully done.
+   - Commit message MUST follow Conventional Commits format and summarize what was completed.
+   - Do NOT batch multiple phases or unrelated changes into one commit.
+6. You CANNOT decide or estimate any functional specification or work. You MUST request question to user to decide ambiguous things.
 
 # Security Rule
 1. You MUST NOT read secret or local configuration files: `appsettings.Local.json`, `appsettings.Secret.json`, `.env`, or any file containing credentials, tokens, or API keys. These files contain sensitive information and must never be read or exposed.

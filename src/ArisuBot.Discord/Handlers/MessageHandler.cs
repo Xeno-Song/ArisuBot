@@ -1,5 +1,6 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
+using ArisuBot.Core.Options;
 using ArisuBot.Core.Services;
 using ArisuBot.Discord.Options;
 using Discord;
@@ -25,6 +26,8 @@ public class MessageHandler
     private readonly IAIMessageLogger _messageLogger;
     private readonly IAdminNotifier _adminNotifier;
     private readonly IPromptLoader _promptLoader;
+    private readonly ICompactionService _compactionService;
+    private readonly CompactionTriggerEvaluator _triggerEvaluator;
     private readonly ILogger<MessageHandler> _logger;
 
     // Session Resume 등으로 인한 동일 메시지 중복 처리 방지
@@ -42,6 +45,8 @@ public class MessageHandler
         IAIMessageLogger messageLogger,
         IAdminNotifier adminNotifier,
         IPromptLoader promptLoader,
+        ICompactionService compactionService,
+        CompactionTriggerEvaluator triggerEvaluator,
         ILogger<MessageHandler> logger)
     {
         _client              = client;
@@ -54,6 +59,8 @@ public class MessageHandler
         _messageLogger       = messageLogger;
         _adminNotifier       = adminNotifier;
         _promptLoader        = promptLoader;
+        _compactionService   = compactionService;
+        _triggerEvaluator    = triggerEvaluator;
         _logger              = logger;
     }
 
@@ -202,6 +209,24 @@ public class MessageHandler
             await _messageLogger.LogAsync(
                 guildId, targetId, userMessage.Author.Id,
                 userMessage.Content, processedContent, providerName);
+
+            // Compaction 트리거 평가 — token 기반 트리거만 인라인 처리 (inactivity/scheduled는 BackgroundService)
+            if (_triggerEvaluator.IsTokenThresholdMet(context) &&
+                _triggerEvaluator.ShouldCompact(context))
+            {
+                // 비동기 fire-and-forget — 메시지 응답 지연 없이 백그라운드에서 실행
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _compactionService.RunAsync(context, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Compaction 실행 실패 — contextId={Id}", context.Id);
+                    }
+                });
+            }
         }
         catch (OperationCanceledException)
         {

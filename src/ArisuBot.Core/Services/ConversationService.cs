@@ -79,4 +79,33 @@ public class ConversationService
     public Task<ConversationContext> StartNewSessionAsync(
         ulong targetId, ContextType type, CancellationToken ct = default)
         => _repository.CreateNewSessionAsync(targetId, type, ct);
+
+    /// <summary>
+    /// sessionId로 과거 세션을 조회해 현재 채널/유저의 active session으로 복원한다.
+    /// 조회된 세션의 메시지를 new session에 복사 → GetOrCreateAsync가 CreatedAt 기준으로 new session을 반환.
+    /// 보안 체크: targetId/type 불일치 시 null 반환.
+    /// </summary>
+    public async Task<ConversationContext?> RestoreSessionAsync(
+        string sessionId, ulong targetId, ContextType type, CancellationToken ct = default)
+    {
+        var source = await _repository.GetContextByIdAsync(sessionId, ct);
+        if (source is null) return null;
+
+        // 보안: 조회된 세션이 현재 채널/유저 소유인지 확인
+        if (source.TargetId != targetId || source.Type != type) return null;
+
+        // 과거 세션 메시지를 복사한 새 세션 생성 → active session 교체
+        var newContext = await _repository.CreateNewSessionAsync(targetId, type, ct);
+        newContext.Participants = new Dictionary<string, ulong>(source.Participants);
+
+        foreach (var msg in source.Messages)
+        {
+            newContext.Messages.Add(msg);
+        }
+
+        newContext.UpdatedAt = DateTime.UtcNow;
+        await _repository.SaveContextAsync(newContext, ct);
+
+        return newContext;
+    }
 }

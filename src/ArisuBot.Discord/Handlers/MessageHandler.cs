@@ -186,6 +186,8 @@ public class MessageHandler
 
             // 응답 후 비캐시 토큰 누적 — 다음 요청의 캐시 롤 임계값 판단에 사용
             context.UncachedTokenCount += totalTokensIn - totalCached;
+            // 마지막 총 토큰 수 갱신 — 재시작 후 UncachedTokenCount 복원 기준값 (tokensIn + tokensOut = 실제 context 규모)
+            context.LastTotalTokens = totalTokensIn + totalTokensOut;
 
             // 복수 응답의 토큰 합산 후 컨텍스트에 저장 (UncachedTokenCount 포함)
             await _conversationService.AppendTokenUsageAsync(context, new TokenUsage

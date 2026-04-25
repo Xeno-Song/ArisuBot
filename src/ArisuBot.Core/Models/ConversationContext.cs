@@ -27,6 +27,9 @@ public class ConversationContext
 
     /// <summary>최근 사용자 메시지 수신 시각 목록. velocity 조건 판단에 사용. GeminiCacheManager가 window 초과분을 prune한다.</summary>
     public List<DateTimeOffset> RecentMessageTimestamps { get; set; } = new();
+
+    /// <summary>마지막 LLM 응답의 총 토큰 수 (tokensIn + tokensOut). 재시작 후 UncachedTokenCount 복원 기준값으로 사용.</summary>
+    public int LastTotalTokens { get; set; }
 }
 
 /// <summary>컨텍스트 범위 구분.</summary>

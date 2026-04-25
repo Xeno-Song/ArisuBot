@@ -56,6 +56,10 @@ public class ConversationDocument
     [BsonElement("recentMessageTimestamps")]
     public List<DateTime> RecentMessageTimestamps { get; set; } = new();
 
+    /// <summary>마지막 LLM 응답의 총 토큰 수 (tokensIn + tokensOut). 재시작 후 UncachedTokenCount 복원 기준값.</summary>
+    [BsonElement("lastTotalTokens")]
+    public int LastTotalTokens { get; set; }
+
     /// <summary>도메인 모델로 변환.</summary>
     public ConversationContext ToDomain() => new()
     {
@@ -70,6 +74,7 @@ public class ConversationDocument
         DynamicCacheRef            = DynamicCacheRef,
         CachedMessageCount         = CachedMessageCount,
         UncachedTokenCount         = UncachedTokenCount,
+        LastTotalTokens            = LastTotalTokens,
         RecentMessageTimestamps    = RecentMessageTimestamps
             .Select(dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)))
             .ToList()
@@ -90,6 +95,7 @@ public class ConversationDocument
         DynamicCacheRef         = context.DynamicCacheRef,
         CachedMessageCount      = context.CachedMessageCount,
         UncachedTokenCount      = context.UncachedTokenCount,
+        LastTotalTokens         = context.LastTotalTokens,
         RecentMessageTimestamps = context.RecentMessageTimestamps
             .Select(dto => dto.UtcDateTime)
             .ToList()

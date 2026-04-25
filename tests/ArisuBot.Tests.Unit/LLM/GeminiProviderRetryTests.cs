@@ -1,6 +1,7 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
+using ArisuBot.LLM.Monitoring;
 using ArisuBot.LLM.Options;
 using Google.GenAI;
 using Google.GenAI.Types;
@@ -13,6 +14,7 @@ namespace ArisuBot.Tests.Unit.LLM;
 public class GeminiProviderRetryTests
 {
     private readonly Mock<IGeminiStreamClient> _streamMock = new();
+    private readonly Mock<ILlmMonitorServer> _pipeMock = new();
 
     /// <summary>지정한 설정으로 GeminiProvider 인스턴스 생성.</summary>
     private GeminiProvider CreateSut(
@@ -35,7 +37,7 @@ public class GeminiProviderRetryTests
             MaxToolIterations = 5
         });
         return new GeminiProvider(
-            _streamMock.Object, geminiOpts, llmOpts,
+            _streamMock.Object, _pipeMock.Object, geminiOpts, llmOpts,
             new Mock<ILogger<GeminiProvider>>().Object);
     }
 
@@ -306,6 +308,29 @@ public class GeminiProviderRetryTests
     }
 
     // ─── Fallback 전환 시 Cache 초기화 ──────────────────────────────────
+
+    // ─── Pipe 이벤트 emit 검증 ───────────────────────────────────────────
+
+    [Fact]
+    public async Task GenerateAsync_EmitsModelStatusEvent_OnFallbackTransition()
+    {
+        // primary → fallback 전환 시 ModelStatusEvent emit 확인
+        var sut = CreateSut(fallbackModel: "fallback-model", streamRetryCount: 0);
+
+        _streamMock.Setup(s => s.StreamAsync(
+                "primary-model", It.IsAny<IEnumerable<Content>>(), It.IsAny<GenerateContentConfig>()))
+            .Returns(() => ThrowDuringStream(new ServerError("overloaded")));
+
+        _streamMock.Setup(s => s.StreamAsync(
+                "fallback-model", It.IsAny<IEnumerable<Content>>(), It.IsAny<GenerateContentConfig>()))
+            .Returns(ToAsyncEnumerable(MakeTextChunk("fallback ok")));
+
+        await CollectAsync(sut.GenerateAsync(
+            [new ChatMessage { Role = Role.User, Content = "hi" }]));
+
+        _pipeMock.Verify(p => p.Emit(It.Is<ModelStatusEvent>(e =>
+            e.CurrentModel == "fallback-model" && e.PreviousModel == "primary-model")), Times.Once);
+    }
 
     [Fact]
     public async Task GenerateAsync_FallbackTransition_ClearsConfigCachedContent()

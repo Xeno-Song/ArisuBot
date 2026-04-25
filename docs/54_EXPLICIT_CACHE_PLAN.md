@@ -289,7 +289,7 @@ while (historyToCache.Count > 0 &&
 | 날짜 | 내용 |
 |---|---|
 | 2026-04-24 | 계획 수립. Phase 1/2 분리. 이번 세션: Phase 1만 구현 |
-| 2026-04-25 | Phase 1 구현 완료 및 런타임 버그 수정 |
+| 2026-04-25 | Phase 1 구현 완료 및 런타임 버그 수정. Phase 2 LLM 상태 모니터링 사이드카 구현 |
 
 ### 2026-04-25 구현 세부 내역
 
@@ -300,6 +300,72 @@ while (historyToCache.Count > 0 &&
 - `GeminiProvider` — `cacheHint` 분기: cache 모드 시 `CachedContent` 설정, contents `Skip(N)`
 - `CacheOptions`, `appsettings.json` `LLM:Cache` 섹션
 - `GeminiCacheManagerTests` 14개 단위 테스트 추가
+
+### 2026-04-25 Phase 2 구현 세부 내역
+
+**LLM 상태 모니터링 사이드카 (`ArisuBot.Monitor`)**
+
+계획 문서의 Phase 2 범위에서 프로젝트명·이벤트 종류·세션 식별자를 사용자와 협의하여 확정:
+- 프로젝트명: `ArisuBot.Monitor` (CacheSidecar → Monitor로 변경)
+- 이벤트: `CACHE_CREATED`, `CACHE_DELETED`, `TOKEN_USAGE`, `MODEL_STATUS` (선택 사항 RETRY 미포함)
+- 세션 식별자: MongoDB doc ID (`context.Id`)
+- 선택 실행: 사이드카 미연결 시 호스트 정상 동작 (fire-and-forget, event drop)
+
+**신규 파일**
+
+| 파일 | 역할 |
+|---|---|
+| `src/ArisuBot.LLM/Monitoring/LlmMonitorEvent.cs` | 폴리모픽 이벤트 계층. `[JsonPolymorphic]`으로 `type` 판별자 직렬화 |
+| `src/ArisuBot.LLM/Monitoring/ILlmMonitorServer.cs` | `Emit(LlmMonitorEvent)` 인터페이스. fire-and-forget |
+| `src/ArisuBot.LLM/Monitoring/MonitorServerOptions.cs` | TCP 서버 설정. Section `"MonitorServer"`. `Host`(string) + `Port`(int) |
+| `src/ArisuBot.LLM/Monitoring/LlmTcpServer.cs` | `ILlmMonitorServer` + `IHostedService`. TCP 서버. `Channel<string>(200, DropOldest)`. 신규 클라이언트 연결 시 stale 이벤트 drain |
+| `src/ArisuBot.Monitor/ArisuBot.Monitor.csproj` | Console 프로젝트. `ArisuBot.LLM` 참조. `Microsoft.Extensions.Configuration.Json` 패키지 추가 |
+| `src/ArisuBot.Monitor/appsettings.json` | Monitor 클라이언트용 `MonitorServer` 섹션 (Host, Port) |
+| `src/ArisuBot.Monitor/SessionState.cs` | MongoDB doc ID 기준 누적 토큰 상태. `Apply(TokenUsageEvent)` 누적 메서드 |
+| `src/ArisuBot.Monitor/CacheEntry.cs` | 캐시 상태 모델. `TimeToLive` 계산 속성 |
+| `src/ArisuBot.Monitor/LlmMonitorApp.cs` | 렌더 루프(1s) + TCP 클라이언트 루프. 콘솔 UI 표시. 재연결 시 `_caches`/`_sessions` 초기화 |
+| `src/ArisuBot.Monitor/Program.cs` | 진입점. `IConfiguration` 빌드 → `MonitorServerOptions` 읽어 `LlmMonitorApp` 생성자 전달 |
+
+**수정 파일**
+
+| 파일 | 변경 내용 |
+|---|---|
+| `GeminiCacheManager.cs` | `ILlmMonitorServer` 주입. cache 생성/삭제 시 `CacheCreatedEvent` / `CacheDeletedEvent` emit |
+| `GeminiProvider.cs` | `ILlmMonitorServer` 주입. `contextId` 파라미터 추가. text yield 전 `TokenUsageEvent` emit. fallback 전환 시 `ModelStatusEvent` emit |
+| `ILLMProvider.cs` | `GenerateAsync`에 `string? contextId = null` 파라미터 추가 |
+| `LLMServiceExtensions.cs` | `MonitorServerOptions` 바인딩. `LlmTcpServer` DI 등록 (`ILlmMonitorServer` + `IHostedService`) |
+| `MessageHandler.cs` | `GenerateAsync` 호출 시 `context.Id` 전달 |
+| `src/ArisuBot.Host/appsettings.json` | `MonitorServer` 섹션 추가 (Host: `127.0.0.1`, Port: `9876`) |
+
+**테스트 추가**
+
+| 파일 | 내용 |
+|---|---|
+| `GeminiCacheManagerTests.cs` | `ILlmMonitorServer` mock 주입. `CacheCreatedEvent`/`CacheDeletedEvent` emit 검증 |
+| `GeminiProviderGenerateTests.cs` | `ILlmMonitorServer` mock 주입. `TokenUsageEvent` emit 검증 |
+| `GeminiProviderRetryTests.cs` | `ILlmMonitorServer` mock 주입. `ModelStatusEvent` emit 검증 |
+| `GeminiProviderToolLoopTests.cs` | `ILlmMonitorServer` mock 주입 (기존 테스트 컴파일 유지) |
+| `LlmTcpServerTests.cs` (신규, `LlmPipeServerTests.cs` 대체) | 클라이언트 없을 때 Emit 예외 없음. JSON 폴리모픽 직렬화 `type` 판별자 포함 확인 |
+| `SessionStateTests.cs` (신규) | `Apply` 누적. `CachePercent` 계산. `Last*` 스냅샷 필드. `CurrentSessionSize`. edge case (TotalIn=0) |
+
+전체 테스트: 180개 통과 (추가 전 대비 +17개).
+
+### 2026-04-25 Named Pipe → TCP 전환
+
+Docker 환경 배포 시 Named Pipe는 컨테이너 간 IPC 불가. TCP로 전환.
+
+**변경 사유**
+- Named Pipe: 동일 Windows 호스트 전용
+- TCP: Docker 컨테이너 간 네트워크 통신 가능. `MonitorServer.Host` / `Port` 설정으로 바인딩 주소 제어
+
+**변경 내역**
+- `ILlmPipeServer` → `ILlmMonitorServer` (rename)
+- `LlmPipeServer` → `LlmTcpServer` (`NamedPipeServerStream` → `TcpListener`)
+- `MonitorServerOptions` 신규: Section `"MonitorServer"`, 기본값 `127.0.0.1:9876`
+- Monitor 클라이언트: `NamedPipeClientStream` → `TcpClient`. 5초 타임아웃 링크드 CTS. `SocketException` catch 추가
+- 재연결 시 `_caches` / `_sessions` 초기화 (stale 상태 제거)
+
+---
 
 **런타임 버그 수정 (3건)**
 

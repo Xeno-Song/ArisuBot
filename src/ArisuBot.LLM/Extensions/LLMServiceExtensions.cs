@@ -1,5 +1,6 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.LLM.Gemini;
+using ArisuBot.LLM.Monitoring;
 using ArisuBot.LLM.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,14 @@ public static class LLMServiceExtensions
         });
         services.AddSingleton<IGeminiStreamClient>(sp => sp.GetRequiredService<GeminiStreamClient>());
         services.AddSingleton<IGeminiCacheClient>(sp => sp.GetRequiredService<GeminiStreamClient>());
+
+        services.Configure<MonitorServerOptions>(configuration.GetSection(MonitorServerOptions.SectionName));
+
+        // LlmTcpServer: Monitor Sidecar에 이벤트 전달. IHostedService로 TCP 서버 루프 관리.
+        // ILlmMonitorServer + IHostedService 양쪽 등록 — Sidecar 미연결 시 이벤트 drop (선택 실행 지원)
+        services.AddSingleton<LlmTcpServer>();
+        services.AddSingleton<ILlmMonitorServer>(sp => sp.GetRequiredService<LlmTcpServer>());
+        services.AddHostedService(sp => sp.GetRequiredService<LlmTcpServer>());
 
         // GeminiProvider
         services.AddSingleton<ILLMProvider, GeminiProvider>();

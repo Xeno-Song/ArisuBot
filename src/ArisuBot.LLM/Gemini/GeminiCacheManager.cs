@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
+using ArisuBot.LLM.Monitoring;
 using ArisuBot.LLM.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -10,10 +11,12 @@ namespace ArisuBot.LLM.Gemini;
 /// <summary>
 /// Gemini 명시적 캐시 생명주기 관리. ILLMCacheManager 구현체.
 /// velocity + threshold 조건 판단, 캐시 생성/교체/삭제, in-memory 추적을 담당한다.
+/// 캐시 생성/삭제 이벤트를 ILlmMonitorServer를 통해 Monitor Sidecar에 전달한다.
 /// </summary>
 public class GeminiCacheManager : ILLMCacheManager
 {
     private readonly IGeminiCacheClient _cacheClient;
+    private readonly ILlmMonitorServer _pipeServer;
     private readonly CacheOptions _cacheOptions;
     private readonly GeminiOptions _geminiOptions;
     private readonly ILogger<GeminiCacheManager> _logger;
@@ -23,11 +26,13 @@ public class GeminiCacheManager : ILLMCacheManager
 
     public GeminiCacheManager(
         IGeminiCacheClient cacheClient,
+        ILlmMonitorServer pipeServer,
         IOptions<CacheOptions> cacheOptions,
         IOptions<GeminiOptions> geminiOptions,
         ILogger<GeminiCacheManager> logger)
     {
         _cacheClient   = cacheClient;
+        _pipeServer    = pipeServer;
         _cacheOptions  = cacheOptions.Value;
         _geminiOptions = geminiOptions.Value;
         _logger        = logger;
@@ -129,6 +134,11 @@ public class GeminiCacheManager : ILLMCacheManager
             _logger.LogInformation(
                 "캐시 생성 완료 — name={CacheName} contentCount={ContentCount} messageCount={MessageCount} ttl={Ttl}",
                 newCache.Name, contentsToCache.Count, newCachedMessageCount, ttl);
+            _pipeServer.Emit(new CacheCreatedEvent(
+                CacheName:  newCache.Name!,
+                TokenCount: (int)(newCache.UsageMetadata?.TotalTokenCount ?? 0),
+                ContextId:  context.Id,
+                ExpiresAt:  DateTimeOffset.UtcNow.AddSeconds(_cacheOptions.TtlSeconds)));
         }
         catch (Exception ex)
         {
@@ -148,6 +158,7 @@ public class GeminiCacheManager : ILLMCacheManager
                 await _cacheClient.DeleteAsync(oldName, ct);
                 _trackedCaches.TryRemove(oldName, out _);
                 _logger.LogInformation("이전 캐시 삭제 완료 — name={CacheName}", oldName);
+                _pipeServer.Emit(new CacheDeletedEvent(CacheName: oldName, Reason: "replaced"));
             }
             catch (Exception ex)
             {
@@ -191,6 +202,7 @@ public class GeminiCacheManager : ILLMCacheManager
             await _cacheClient.DeleteAsync(cacheName, ct);
             _trackedCaches.TryRemove(cacheName, out _);
             _logger.LogInformation("캐시 삭제 완료 — name={CacheName}", cacheName);
+            _pipeServer.Emit(new CacheDeletedEvent(CacheName: cacheName, Reason: "cleanup"));
         }
         catch (Exception ex)
         {

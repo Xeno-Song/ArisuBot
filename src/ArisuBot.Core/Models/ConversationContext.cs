@@ -13,6 +13,20 @@ public class ConversationContext
     public Dictionary<string, ulong> Participants { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    // --- 명시적 캐시 상태 ---
+
+    /// <summary>Gemini 명시적 캐시 리소스 이름. 없으면 null.</summary>
+    public string? DynamicCacheRef { get; set; }
+
+    /// <summary>DynamicCacheRef에 포함된 비-System 메시지 수. GenerateAsync에서 contents를 skip할 기준.</summary>
+    public int CachedMessageCount { get; set; }
+
+    /// <summary>마지막 캐시 생성 이후 누적된 비캐시 입력 토큰 수. 캐시 갱신 임계값 비교에 사용.</summary>
+    public int UncachedTokenCount { get; set; }
+
+    /// <summary>최근 사용자 메시지 수신 시각 목록. velocity 조건 판단에 사용. GeminiCacheManager가 window 초과분을 prune한다.</summary>
+    public List<DateTimeOffset> RecentMessageTimestamps { get; set; } = new();
 }
 
 /// <summary>컨텍스트 범위 구분.</summary>

@@ -8,3 +8,4 @@
 | [51_LOGGING_PLAN.md](51_LOGGING_PLAN.md) | 로깅 개선 계획 | MessageHandler·GeminiProvider 로그 추가 및 silent exception 개선 |
 | [52_FALLBACK_MODEL_PLAN.md](52_FALLBACK_MODEL_PLAN.md) | Fallback 모델 설계 | Gemini ServerError 시 fallback 모델 자동 전환 설계 (미구현) |
 | [53_THOUGHT_SIGNATURE_PRESERVATION.md](53_THOUGHT_SIGNATURE_PRESERVATION.md) | thought_signature 보존 | ProviderMetadataJson 도입으로 thinking 모델 reasoning state 영속화 |
+| [54_EXPLICIT_CACHE_PLAN.md](54_EXPLICIT_CACHE_PLAN.md) | Explicit Cache 계획 | Gemini 명시적 캐싱 구현 계획. Phase 1(캐시 구현) + Phase 2(모니터링 사이드카) |

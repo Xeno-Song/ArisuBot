@@ -11,20 +11,35 @@ namespace ArisuBot.LLM.Extensions;
 /// <summary>LLM 관련 DI 등록 확장 메서드.</summary>
 public static class LLMServiceExtensions
 {
-    /// <summary>config에 따라 LLM 공급자를 DI 컨테이너에 등록한다. 현재: Gemini 고정.</summary>
+    /// <summary>config에 따라 LLM 공급자와 캐시 관련 서비스를 DI 컨테이너에 등록한다. 현재: Gemini 고정.</summary>
     [ExcludeFromCodeCoverage(Justification = "DI 배선 코드 — 실 IServiceCollection 없이 단위 테스트 불가.")]
     public static IServiceCollection AddLLMProvider(
         this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<LLMOptions>(configuration.GetSection(LLMOptions.SectionName));
         services.Configure<GeminiOptions>(configuration.GetSection(GeminiOptions.SectionName));
+        services.Configure<CacheOptions>(configuration.GetSection(CacheOptions.SectionName));
+
         // GeminiStreamClient: API 키 필요 → Options에서 팩토리 생성
-        services.AddSingleton<IGeminiStreamClient>(sp =>
+        // IGeminiStreamClient + IGeminiCacheClient 양쪽으로 등록
+        services.AddSingleton<GeminiStreamClient>(sp =>
         {
             var opts = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
             return new GeminiStreamClient(opts.ApiKey);
         });
+        services.AddSingleton<IGeminiStreamClient>(sp => sp.GetRequiredService<GeminiStreamClient>());
+        services.AddSingleton<IGeminiCacheClient>(sp => sp.GetRequiredService<GeminiStreamClient>());
+
+        // GeminiProvider
         services.AddSingleton<ILLMProvider, GeminiProvider>();
+
+        // GeminiCacheManager: ILLMCacheManager + 구체 타입 모두 등록 (CleanupService가 구체 타입 주입)
+        services.AddSingleton<GeminiCacheManager>();
+        services.AddSingleton<ILLMCacheManager>(sp => sp.GetRequiredService<GeminiCacheManager>());
+
+        // GeminiCacheCleanupService: 앱 시작/종료 시 캐시 정리
+        services.AddHostedService<GeminiCacheCleanupService>();
+
         return services;
     }
 }

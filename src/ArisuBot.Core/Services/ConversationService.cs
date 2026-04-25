@@ -30,8 +30,8 @@ public class ConversationService
 
     /// <summary>
     /// 시스템 프롬프트 + 히스토리(최대 N개, Role.System 제외) + 새 유저 메시지를 조합해 LLM 입력 목록을 반환한다.
-    /// Role.System은 TakeLast로 잘릴 수 있어 항상 fresh로 prepend한다.
-    /// DB에 저장된 System 메시지는 감사 목적이며 LLM 입력에서는 중복 방지를 위해 제외한다.
+    /// DB에 저장된 System 메시지가 있으면 우선 사용 — 캐시 prefix 바이트 일치를 위해 최초 등록 본을 유지한다.
+    /// DB에 없으면 systemPrompt 파라미터로 폴백 (신규 세션 첫 요청 시).
     /// newUserMessage는 Role.User이어야 하며 SenderName을 포함할 수 있다.
     /// </summary>
     public IReadOnlyList<ChatMessage> BuildMessageList(
@@ -41,15 +41,16 @@ public class ConversationService
             ? _options.UserContextMaxMessages
             : _options.ChannelContextMaxMessages;
 
-        // Role.System은 TakeLast 기준에서 제외 — 항상 첫 번째로 fresh prepend
+        // DB System 메시지 우선 — 없으면 파일 로드 prompt 폴백
+        var systemMessage = context.Messages.FirstOrDefault(m => m.Role == Role.System)
+            ?? new ChatMessage { Role = Role.System, Content = systemPrompt };
+
+        // System 메시지는 별도 처리하므로 히스토리에서 제외
         var history = context.Messages
             .Where(m => m.Role != Role.System)
             .TakeLast(maxHistory);
 
-        var messages = new List<ChatMessage>
-        {
-            new() { Role = Role.System, Content = systemPrompt }
-        };
+        var messages = new List<ChatMessage> { systemMessage };
         messages.AddRange(history);
         messages.Add(newUserMessage);
 

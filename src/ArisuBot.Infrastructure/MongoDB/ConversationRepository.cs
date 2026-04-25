@@ -74,6 +74,18 @@ public class ConversationRepository : IConversationRepository
         };
     }
 
+    /// <summary>모든 도큐먼트의 dynamicCacheRef를 제거하고 캐시 카운터를 초기화한다. 프로세스 재시작 시 stale ref 제거에 사용.</summary>
+    public async Task ClearAllDynamicCacheRefsAsync(CancellationToken ct = default)
+    {
+        // dynamicCacheRef 필드가 존재하는 도큐먼트만 대상 — 불필요한 write 방지
+        var filter = Builders<ConversationDocument>.Filter.Exists(d => d.DynamicCacheRef, true);
+        var update = Builders<ConversationDocument>.Update
+            .Unset(d => d.DynamicCacheRef)
+            .Set(d => d.CachedMessageCount, 0)
+            .Set(d => d.UncachedTokenCount, 0);
+        await _collection.UpdateManyAsync(filter, update, cancellationToken: ct);
+    }
+
     private static FilterDefinition<ConversationDocument> BuildFilter(string targetId, ContextType type) =>
         Builders<ConversationDocument>.Filter.And(
             Builders<ConversationDocument>.Filter.Eq(d => d.TargetId, targetId),

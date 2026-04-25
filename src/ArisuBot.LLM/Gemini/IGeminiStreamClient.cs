@@ -8,7 +8,7 @@ public interface IGeminiStreamClient
     IAsyncEnumerable<GenerateContentResponse> StreamAsync(
         string model, IEnumerable<Content> contents, GenerateContentConfig config);
 
-    /// <summary>스트리밍 전 토큰 수를 미리 집계한다. 디버그 로그 및 컨텍스트 크기 검증에 사용.</summary>
+    /// <summary>전송 전 토큰 수를 집계한다. 진단 로그 및 컨텍스트 크기 검증에 사용.</summary>
     Task<CountTokensResponse> CountTokensAsync(
         string model, List<Content> contents, CountTokensConfig config, CancellationToken ct = default);
 }

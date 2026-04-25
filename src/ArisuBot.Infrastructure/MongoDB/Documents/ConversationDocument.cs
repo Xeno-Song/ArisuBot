@@ -37,6 +37,29 @@ public class ConversationDocument
     [BsonElement("updatedAt")]
     public DateTime UpdatedAt { get; set; }
 
+    // --- 명시적 캐시 상태 (기존 문서에 없으면 null/0 기본값 적용) ---
+
+    /// <summary>Gemini 명시적 캐시 리소스 이름. 없으면 null.</summary>
+    [BsonElement("dynamicCacheRef")]
+    [BsonIgnoreIfNull]
+    public string? DynamicCacheRef { get; set; }
+
+    /// <summary>DynamicCacheRef에 포함된 비-System 메시지 수.</summary>
+    [BsonElement("cachedMessageCount")]
+    public int CachedMessageCount { get; set; }
+
+    /// <summary>마지막 캐시 생성 이후 누적된 비캐시 입력 토큰 수.</summary>
+    [BsonElement("uncachedTokenCount")]
+    public int UncachedTokenCount { get; set; }
+
+    /// <summary>최근 사용자 메시지 수신 시각 목록 (UTC DateTime). velocity 조건 판단에 사용.</summary>
+    [BsonElement("recentMessageTimestamps")]
+    public List<DateTime> RecentMessageTimestamps { get; set; } = new();
+
+    /// <summary>마지막 LLM 응답의 총 토큰 수 (tokensIn + tokensOut). 재시작 후 UncachedTokenCount 복원 기준값.</summary>
+    [BsonElement("lastTotalTokens")]
+    public int LastTotalTokens { get; set; }
+
     /// <summary>도메인 모델로 변환.</summary>
     public ConversationContext ToDomain() => new()
     {
@@ -47,7 +70,14 @@ public class ConversationDocument
         TokenUsage = TokenUsage.Select(t => t.ToDomain()).ToList(),
         Participants = Participants.ToDictionary(kvp => kvp.Key, kvp => ulong.Parse(kvp.Value)),
         CreatedAt = CreatedAt,
-        UpdatedAt = UpdatedAt
+        UpdatedAt = UpdatedAt,
+        DynamicCacheRef            = DynamicCacheRef,
+        CachedMessageCount         = CachedMessageCount,
+        UncachedTokenCount         = UncachedTokenCount,
+        LastTotalTokens            = LastTotalTokens,
+        RecentMessageTimestamps    = RecentMessageTimestamps
+            .Select(dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)))
+            .ToList()
     };
 
     /// <summary>도메인 모델에서 도큐먼트 생성.</summary>
@@ -61,7 +91,14 @@ public class ConversationDocument
         TokenUsage = context.TokenUsage.Select(TokenUsageDocument.FromDomain).ToList(),
         Participants = context.Participants.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToString()),
         CreatedAt = context.CreatedAt,
-        UpdatedAt = context.UpdatedAt
+        UpdatedAt = context.UpdatedAt,
+        DynamicCacheRef         = context.DynamicCacheRef,
+        CachedMessageCount      = context.CachedMessageCount,
+        UncachedTokenCount      = context.UncachedTokenCount,
+        LastTotalTokens         = context.LastTotalTokens,
+        RecentMessageTimestamps = context.RecentMessageTimestamps
+            .Select(dto => dto.UtcDateTime)
+            .ToList()
     };
 }
 

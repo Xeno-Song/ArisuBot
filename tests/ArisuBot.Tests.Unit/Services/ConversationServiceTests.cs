@@ -96,6 +96,59 @@ public class ConversationServiceTests
     }
 
     [Fact]
+    public void BuildMessageList_UsesDbSystemMessage_WhenPresent()
+    {
+        // DB에 저장된 System 메시지가 있으면 파라미터 systemPrompt 무시하고 DB 본 사용
+        var context = new ConversationContext
+        {
+            Type = ContextType.User,
+            Messages = [new() { Role = Role.System, Content = "db-system-prompt" }]
+        };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "hello" };
+
+        var messages = _sut.BuildMessageList(context, newMsg, "file-system-prompt");
+
+        Assert.Equal(Role.System, messages[0].Role);
+        Assert.Equal("db-system-prompt", messages[0].Content);
+    }
+
+    [Fact]
+    public void BuildMessageList_FallsBackToFilePrompt_WhenNoDbSystemMessage()
+    {
+        // DB에 System 메시지 없으면 파라미터 systemPrompt 사용
+        var context = new ConversationContext { Type = ContextType.User };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "hello" };
+
+        var messages = _sut.BuildMessageList(context, newMsg, "file-system-prompt");
+
+        Assert.Equal(Role.System, messages[0].Role);
+        Assert.Equal("file-system-prompt", messages[0].Content);
+    }
+
+    [Fact]
+    public void BuildMessageList_DbSystemMessage_NotDuplicatedInHistory()
+    {
+        // DB System 메시지가 history에 중복 포함되지 않아야 함
+        var context = new ConversationContext
+        {
+            Type = ContextType.User,
+            Messages =
+            [
+                new() { Role = Role.System,    Content = "db-system" },
+                new() { Role = Role.User,      Content = "user-msg" },
+                new() { Role = Role.Assistant, Content = "asst-msg" }
+            ]
+        };
+        var newMsg = new ChatMessage { Role = Role.User, Content = "new" };
+
+        var messages = _sut.BuildMessageList(context, newMsg, "file-system");
+
+        // System 메시지는 정확히 1개
+        Assert.Single(messages.Where(m => m.Role == Role.System));
+        Assert.Equal("db-system", messages[0].Content);
+    }
+
+    [Fact]
     public async Task AppendMessage_AddsMessageAndCallsSaveContext()
     {
         var context = new ConversationContext { Type = ContextType.User };

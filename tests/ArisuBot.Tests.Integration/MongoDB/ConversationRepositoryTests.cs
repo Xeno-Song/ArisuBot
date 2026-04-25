@@ -177,4 +177,73 @@ public class ConversationRepositoryTests : IAsyncLifetime
         Assert.Single(retrieved.Messages);
         Assert.Equal("Xeno", retrieved.Messages[0].SenderName);
     }
+
+    [Fact]
+    public async Task ClearAllDynamicCacheRefsAsync_RestoresUncachedTokenCount_FromLastTotalTokens()
+    {
+        // 캐시 ref + LastTotalTokens가 있는 컨텍스트 저장
+        var context = new ConversationContext
+        {
+            TargetId = 800UL,
+            Type = ContextType.User,
+            DynamicCacheRef    = "caches/some-cache",
+            CachedMessageCount = 4,
+            UncachedTokenCount = 0,     // 캐시 생성 직후 상태 — 0
+            LastTotalTokens    = 85000  // 이전 응답에서 측정된 실제 context 규모
+        };
+        await _sut.SaveContextAsync(context);
+
+        await _sut.ClearAllDynamicCacheRefsAsync();
+
+        var retrieved = await _sut.GetUserContextAsync(800UL);
+        // DynamicCacheRef 제거, CachedMessageCount 초기화
+        Assert.Null(retrieved.DynamicCacheRef);
+        Assert.Equal(0, retrieved.CachedMessageCount);
+        // UncachedTokenCount = LastTotalTokens — 0이 아님
+        Assert.Equal(85000, retrieved.UncachedTokenCount);
+        // LastTotalTokens 자체는 유지
+        Assert.Equal(85000, retrieved.LastTotalTokens);
+    }
+
+    [Fact]
+    public async Task ClearAllDynamicCacheRefsAsync_SetsUncachedTokenCountToZero_WhenLastTotalTokensIsZero()
+    {
+        // LastTotalTokens가 0인 경우 (신규 세션 또는 첫 응답 전 재시작)
+        var context = new ConversationContext
+        {
+            TargetId = 801UL,
+            Type = ContextType.User,
+            DynamicCacheRef    = "caches/some-cache",
+            CachedMessageCount = 2,
+            UncachedTokenCount = 0,
+            LastTotalTokens    = 0
+        };
+        await _sut.SaveContextAsync(context);
+
+        await _sut.ClearAllDynamicCacheRefsAsync();
+
+        var retrieved = await _sut.GetUserContextAsync(801UL);
+        Assert.Null(retrieved.DynamicCacheRef);
+        Assert.Equal(0, retrieved.UncachedTokenCount); // LastTotalTokens = 0이므로 0 유지
+    }
+
+    [Fact]
+    public async Task ClearAllDynamicCacheRefsAsync_DoesNotAffectContextsWithoutCacheRef()
+    {
+        // dynamicCacheRef 없는 컨텍스트는 영향 없음
+        var context = new ConversationContext
+        {
+            TargetId = 802UL,
+            Type = ContextType.User,
+            UncachedTokenCount = 12000,
+            LastTotalTokens    = 50000
+        };
+        await _sut.SaveContextAsync(context);
+
+        await _sut.ClearAllDynamicCacheRefsAsync();
+
+        var retrieved = await _sut.GetUserContextAsync(802UL);
+        // 변경 없음
+        Assert.Equal(12000, retrieved.UncachedTokenCount);
+    }
 }

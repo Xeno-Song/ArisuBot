@@ -5,6 +5,9 @@
 # Workflow
 1. You MUST build plan before modify the code or documents.
 2. You MUST get approve about plan before executing plan.
+   - This rule applies WITHOUT EXCEPTION — including simple bug fixes, typo corrections, and minor changes.
+   - Do NOT begin any implementation until the user explicitly approves (e.g. "진행", "proceed", "ok").
+   - Diagnosing and explaining a problem is allowed without approval. Writing or editing code is NOT.
 3. Each plan MUST include all of the following sections:
    - **수정 범위**: files and classes to be changed
    - **사이드 이펙트**: potential impacts on other components, DI registrations, or behavior changes

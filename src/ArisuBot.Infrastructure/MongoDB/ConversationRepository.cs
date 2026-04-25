@@ -74,6 +74,29 @@ public class ConversationRepository : IConversationRepository
         };
     }
 
+    /// <summary>
+    /// 모든 도큐먼트의 dynamicCacheRef를 제거하고 캐시 카운터를 초기화한다. 프로세스 재시작 시 stale ref 제거에 사용.
+    /// UncachedTokenCount는 0이 아닌 LastTotalTokens로 복원 — 다음 요청에서 cache 생성 조건을 즉시 평가하기 위함.
+    /// </summary>
+    public async Task ClearAllDynamicCacheRefsAsync(CancellationToken ct = default)
+    {
+        // dynamicCacheRef 필드가 존재하는 도큐먼트만 대상 — 불필요한 write 방지
+        var filter = Builders<ConversationDocument>.Filter.Exists(d => d.DynamicCacheRef, true);
+        var docs = await _collection.Find(filter).ToListAsync(ct);
+
+        foreach (var doc in docs)
+        {
+            // UncachedTokenCount = LastTotalTokens: 이전 세션의 실제 context 규모를 복원해
+            // 재시작 후 첫 요청에서 cache 생성 조건을 즉시 평가할 수 있도록 한다.
+            var docFilter = Builders<ConversationDocument>.Filter.Eq(d => d.Id, doc.Id);
+            var update = Builders<ConversationDocument>.Update
+                .Unset(d => d.DynamicCacheRef)
+                .Set(d => d.CachedMessageCount, 0)
+                .Set(d => d.UncachedTokenCount, doc.LastTotalTokens);
+            await _collection.UpdateOneAsync(docFilter, update, cancellationToken: ct);
+        }
+    }
+
     private static FilterDefinition<ConversationDocument> BuildFilter(string targetId, ContextType type) =>
         Builders<ConversationDocument>.Filter.And(
             Builders<ConversationDocument>.Filter.Eq(d => d.TargetId, targetId),

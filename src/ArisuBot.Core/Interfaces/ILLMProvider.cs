@@ -16,10 +16,12 @@ public interface ILLMProvider
     /// <param name="messages">대화 히스토리 + 새 유저 메시지.</param>
     /// <param name="tools">LLM에 등록할 툴 목록. null이면 툴 비활성화.</param>
     /// <param name="toolContext">툴 실행 컨텍스트 (GuildId, ChannelId). null이면 툴 비활성화.</param>
+    /// <param name="cacheHint">명시적 캐시 정보. null이면 캐시 없이 전체 컨텍스트 전송. 캐시 미지원 provider는 무시.</param>
     /// <param name="ct">취소 토큰.</param>
     IAsyncEnumerable<LLMResponse> GenerateAsync(
         IEnumerable<ChatMessage> messages,
         IReadOnlyList<ILLMTool>? tools = null,
         LLMToolExecutionContext? toolContext = null,
+        CacheHint? cacheHint = null,
         CancellationToken ct = default);
 }

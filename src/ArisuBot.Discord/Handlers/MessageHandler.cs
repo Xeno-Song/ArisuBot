@@ -203,6 +203,10 @@ public class MessageHandler
                 guildId, targetId, userMessage.Author.Id,
                 userMessage.Content, processedContent, providerName);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "메시지 처리 실패 — channelId={ChannelId} userId={UserId}",
@@ -211,6 +215,10 @@ public class MessageHandler
             await _adminNotifier.NotifyAsync(
                 $"[ArisuBot 오류] {ex.GetType().Name}: {ex.Message}" +
                 $"\n채널: {userMessage.Channel.Id}\n유저: {userMessage.Author.Id}");
+
+            // LLM 전체 실패 시 사용자에게 채널 메시지 전송 (reply 아님)
+            await userMessage.Channel.SendMessageAsync(
+                "지금은 응답하기 어렵습니다. 잠시 후 다시 말 걸어주세요!");
         }
     }
 

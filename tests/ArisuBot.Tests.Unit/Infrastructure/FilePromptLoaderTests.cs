@@ -14,27 +14,30 @@ public class FilePromptLoaderTests : IDisposable
 
     public void Dispose() => Directory.Delete(_tempDir, recursive: true);
 
-    private void WritePrompts(string system, string persona)
+    private void WritePrompts(string system, string persona, string compaction = "compaction content")
     {
         File.WriteAllText(Path.Combine(_tempDir, "system.md"), system);
         File.WriteAllText(Path.Combine(_tempDir, "persona.md"), persona);
+        File.WriteAllText(Path.Combine(_tempDir, "compaction.md"), compaction);
     }
 
     [Fact]
     public void Constructor_LoadsPromptsFromFiles()
     {
-        WritePrompts("sys content", "persona content");
+        WritePrompts("sys content", "persona content", "compaction content");
 
         var loader = new FilePromptLoader(_tempDir);
 
         Assert.Equal("sys content", loader.SystemPrompt);
         Assert.Equal("persona content", loader.PersonaPrompt);
+        Assert.Equal("compaction content", loader.CompactionPrompt);
     }
 
     [Fact]
     public void Constructor_Throws_WhenSystemMdMissing()
     {
         File.WriteAllText(Path.Combine(_tempDir, "persona.md"), "persona");
+        File.WriteAllText(Path.Combine(_tempDir, "compaction.md"), "compaction");
 
         Assert.Throws<FileNotFoundException>(() => new FilePromptLoader(_tempDir));
     }
@@ -43,6 +46,16 @@ public class FilePromptLoaderTests : IDisposable
     public void Constructor_Throws_WhenPersonaMdMissing()
     {
         File.WriteAllText(Path.Combine(_tempDir, "system.md"), "system");
+        File.WriteAllText(Path.Combine(_tempDir, "compaction.md"), "compaction");
+
+        Assert.Throws<FileNotFoundException>(() => new FilePromptLoader(_tempDir));
+    }
+
+    [Fact]
+    public void Constructor_Throws_WhenCompactionMdMissing()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "system.md"), "system");
+        File.WriteAllText(Path.Combine(_tempDir, "persona.md"), "persona");
 
         Assert.Throws<FileNotFoundException>(() => new FilePromptLoader(_tempDir));
     }
@@ -50,14 +63,15 @@ public class FilePromptLoaderTests : IDisposable
     [Fact]
     public void Reload_UpdatesPromptsFromFiles()
     {
-        WritePrompts("original sys", "original persona");
+        WritePrompts("original sys", "original persona", "original compaction");
         var loader = new FilePromptLoader(_tempDir);
 
-        WritePrompts("updated sys", "updated persona");
+        WritePrompts("updated sys", "updated persona", "updated compaction");
         loader.Reload();
 
         Assert.Equal("updated sys", loader.SystemPrompt);
         Assert.Equal("updated persona", loader.PersonaPrompt);
+        Assert.Equal("updated compaction", loader.CompactionPrompt);
     }
 
     [Fact]

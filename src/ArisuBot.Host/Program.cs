@@ -43,6 +43,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.Configure<DiscordToolOptions>(config.GetSection(DiscordToolOptions.SectionName));
         services.Configure<MongoDbOptions>(config.GetSection(MongoDbOptions.SectionName));
         services.Configure<MemoryOptions>(config.GetSection(MemoryOptions.SectionName));
+        services.Configure<CompactionOptions>(config.GetSection(CompactionOptions.SectionName));
 
         // Infrastructure — MongoDB
         services.AddSingleton<MongoDbContext>();

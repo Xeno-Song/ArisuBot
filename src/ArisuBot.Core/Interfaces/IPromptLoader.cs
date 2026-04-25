@@ -9,6 +9,9 @@ public interface IPromptLoader
     /// <summary>persona.md 내용. 컨텍스트 최초 생성 시 Role.User로 1회 주입.</summary>
     string PersonaPrompt { get; }
 
+    /// <summary>compaction.md 내용. Compaction 트리거 시 User 메시지로 append되는 추출 지시문.</summary>
+    string CompactionPrompt { get; }
+
     /// <summary>파일을 다시 읽어 캐시를 갱신한다. /new-session 호출 시 사용.</summary>
     void Reload();
 }

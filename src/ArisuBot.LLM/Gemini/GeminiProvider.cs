@@ -4,6 +4,7 @@ using System.Text.Json;
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Options;
+using Google.GenAI;
 using Google.GenAI.Types;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -101,6 +102,9 @@ public class GeminiProvider : ILLMProvider
         // yield 없는 iteration(FunctionCall-only)의 토큰을 다음 yield로 누적
         int pendingTokensIn = 0, pendingTokensOut = 0, pendingTokensCached = 0;
 
+        // ServerError 재시도 + fallback 전환을 위한 현재 모델 추적 — 전환 후 sticky 유지
+        var currentModel = _geminiOptions.Model;
+
         // 함수 호출 루프 — MaxToolIterations 초과 시 예외 발생
         for (var iteration = 0; iteration < _llmOptions.MaxToolIterations; iteration++)
         {
@@ -111,21 +115,69 @@ public class GeminiProvider : ILLMProvider
             // 스트리밍 도착 순서 그대로 모든 Part 누적 — text/thought/FunctionCall 인터리브 순서 보존
             var allParts = new List<Part>();
 
-            // 스트리밍 마지막 청크에 UsageMetadata 집계값이 포함됨 — 마지막 non-null 값을 보존
-            await foreach (var chunk in _streamClient.StreamAsync(_geminiOptions.Model, contents, config)
-                .WithCancellation(ct))
+            // 재시도 루프: ServerError 시 동일 모델 재시도 후 FallbackModel로 전환
+            var retries = 0;
+            while (true)
             {
-                if (chunk.Candidates is { Count: > 0 })
+                sb.Clear();
+                usage = null;
+                allParts.Clear();
+
+                try
                 {
-                    foreach (var part in chunk.Candidates[0].Content?.Parts ?? [])
+                    // 스트리밍 마지막 청크에 UsageMetadata 집계값이 포함됨 — 마지막 non-null 값을 보존
+                    await foreach (var chunk in _streamClient.StreamAsync(currentModel, contents, config)
+                        .WithCancellation(ct))
                     {
-                        allParts.Add(part);
-                        if (part.Text is not null)
-                            sb.Append(part.Text);
+                        if (chunk.Candidates is { Count: > 0 })
+                        {
+                            foreach (var part in chunk.Candidates[0].Content?.Parts ?? [])
+                            {
+                                allParts.Add(part);
+                                if (part.Text is not null)
+                                    sb.Append(part.Text);
+                            }
+                        }
+                        if (chunk.UsageMetadata is not null)
+                            usage = chunk.UsageMetadata;
                     }
+                    break; // 스트리밍 성공 — 재시도 루프 탈출
                 }
-                if (chunk.UsageMetadata is not null)
-                    usage = chunk.UsageMetadata;
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (ClientError ex)
+                {
+                    // 4xx ClientError — 재시도 없이 즉시 실패. 상세 원인은 exception 메시지에서 확인
+                    _logger.LogError(ex, "Gemini ClientError — model={Model} iteration={Iteration}", currentModel, iteration);
+                    throw;
+                }
+                catch (ServerError ex)
+                {
+                    retries++;
+                    if (retries <= _geminiOptions.StreamRetryCount)
+                    {
+                        _logger.LogWarning(ex,
+                            "Stream 실패, 동일 모델 재시도 — model={Model} attempt={Attempt} delayMs={DelayMs}",
+                            currentModel, retries, _geminiOptions.RetryDelayMs);
+                        if (_geminiOptions.RetryDelayMs > 0)
+                            await Task.Delay(_geminiOptions.RetryDelayMs, ct);
+                        continue;
+                    }
+
+                    // 재시도 소진 — fallback 전환 시도
+                    if (_geminiOptions.FallbackModel is null || currentModel == _geminiOptions.FallbackModel)
+                        throw; // fallback 없거나 이미 fallback 중이면 최종 실패
+
+                    _logger.LogWarning(ex,
+                        "Fallback 모델 전환 — from={Primary} to={Fallback}",
+                        currentModel, _geminiOptions.FallbackModel);
+                    currentModel = _geminiOptions.FallbackModel;
+                    config.CachedContent = null; // fallback은 no-cache로 진행
+                    retries = 0;
+                    // continue: fallback 모델로 즉시 재시도 (딜레이 없음)
+                }
             }
 
             // FunctionCall Part 추출 — 실행할 함수 목록

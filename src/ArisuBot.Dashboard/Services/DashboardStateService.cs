@@ -17,8 +17,11 @@ public class DashboardStateService
     private readonly LinkedList<RecentEvent> _recentEvents = new();
     private const int MaxEventCount = 50;
 
-    // 실시간 토큰 집계 (컨텍스트 ID → 누적)
-    private readonly Dictionary<string, SessionTokenSummary> _tokenSummary = new();
+    // 실시간 토큰 집계 (컨텍스트 ID → 누적) — DB 동기화 이후 delta
+    private readonly Dictionary<string, SessionTokenSummary> _tokenDelta = new();
+
+    // DB 동기화 기준값 — 마지막 동기화 시점의 MongoDB 전체 누적
+    private TokenBaseline _baseline = new();
 
     // 실시간 tool 호출 에러 (최근 20건)
     private readonly LinkedList<ToolErrorEntry> _toolErrors = new();
@@ -44,9 +47,32 @@ public class DashboardStateService
         get { lock (_lock) return _recentEvents.ToList(); }
     }
 
-    public IReadOnlyList<SessionTokenSummary> TokenSummaries
+    /// <summary>DB 기준값 스냅샷.</summary>
+    public TokenBaseline Baseline
     {
-        get { lock (_lock) return _tokenSummary.Values.OrderByDescending(s => s.LastActivity).ToList(); }
+        get { lock (_lock) return _baseline; }
+    }
+
+    /// <summary>마지막 DB 동기화 이후 TCP로 수신한 토큰 delta (컨텍스트별).</summary>
+    public IReadOnlyList<SessionTokenSummary> TokenDelta
+    {
+        get { lock (_lock) return _tokenDelta.Values.OrderByDescending(s => s.LastActivity).ToList(); }
+    }
+
+    /// <summary>delta 전체 합산.</summary>
+    public (long In, long Out, long Cached, int Requests) DeltaTotal
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return (
+                    _tokenDelta.Values.Sum(s => s.TotalIn),
+                    _tokenDelta.Values.Sum(s => s.TotalOut),
+                    _tokenDelta.Values.Sum(s => s.TotalCached),
+                    _tokenDelta.Values.Sum(s => s.RequestCount));
+            }
+        }
     }
 
     public IReadOnlyList<ToolErrorEntry> ToolErrors
@@ -73,10 +99,10 @@ public class DashboardStateService
 
                 case TokenUsageEvent e:
                     var ctxId = e.ContextId ?? "";
-                    if (!_tokenSummary.TryGetValue(ctxId, out var tok))
+                    if (!_tokenDelta.TryGetValue(ctxId, out var tok))
                     {
                         tok = new SessionTokenSummary { ContextId = ctxId };
-                        _tokenSummary[ctxId] = tok;
+                        _tokenDelta[ctxId] = tok;
                     }
                     tok.TotalIn     += e.TokensIn;
                     tok.TotalOut    += e.TokensOut;
@@ -121,6 +147,25 @@ public class DashboardStateService
             }
         }
 
+        OnChange?.Invoke();
+    }
+
+    /// <summary>DB 동기화 완료 시 호출. baseline 갱신 + delta 리셋.</summary>
+    public void SyncBaseline(long dbIn, long dbOut, long dbCached, int dbRequests)
+    {
+        lock (_lock)
+        {
+            _baseline = new TokenBaseline
+            {
+                TotalIn      = dbIn,
+                TotalOut     = dbOut,
+                TotalCached  = dbCached,
+                RecordCount  = dbRequests,
+                SyncedAt     = DateTimeOffset.UtcNow
+            };
+            // 새 baseline에 기존 delta 포함됨 → delta 리셋
+            _tokenDelta.Clear();
+        }
         OnChange?.Invoke();
     }
 
@@ -170,3 +215,15 @@ public class SessionTokenSummary
 
 /// <summary>실시간 tool 에러 항목.</summary>
 public record ToolErrorEntry(string ToolName, string ErrorMessage, string? ContextId, DateTimeOffset Timestamp);
+
+/// <summary>DB 동기화 시점의 전체 토큰 누적 스냅샷.</summary>
+public class TokenBaseline
+{
+    public long TotalIn { get; set; }
+    public long TotalOut { get; set; }
+    public long TotalCached { get; set; }
+    public int RecordCount { get; set; }
+    /// <summary>동기화 시각. null이면 아직 동기화 미완료.</summary>
+    public DateTimeOffset? SyncedAt { get; set; }
+    public bool IsLoaded => SyncedAt.HasValue;
+}

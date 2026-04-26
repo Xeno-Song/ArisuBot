@@ -4,8 +4,18 @@ using MongoDB.Driver;
 
 namespace ArisuBot.Dashboard.Services;
 
+/// <summary>Dashboard에서 사용하는 MongoDB 읽기 쿼리 추상화. 테스트 대역 주입을 허용한다.</summary>
+public interface IMongoQueryService
+{
+    Task<List<ErrorLogDocument>> GetRecentErrorsAsync(int limit = 100, CancellationToken ct = default);
+    Task<List<ErrorLogDocument>> GetErrorsByTypeAsync(string errorType, int limit = 50, CancellationToken ct = default);
+    Task<List<ConversationDocument>> GetAllSessionsAsync(int limit = 200, CancellationToken ct = default);
+    Task<TokenAggregate?> GetSessionTokenAggregateAsync(string sessionId, CancellationToken ct = default);
+    Task<TokenAggregate> GetTotalTokenAggregateAsync(CancellationToken ct = default);
+}
+
 /// <summary>Dashboard용 MongoDB 읽기 전용 쿼리 서비스. error_logs + conversations 컬렉션 조회.</summary>
-public class MongoQueryService
+public class MongoQueryService : IMongoQueryService
 {
     private readonly MongoDbContext _db;
 

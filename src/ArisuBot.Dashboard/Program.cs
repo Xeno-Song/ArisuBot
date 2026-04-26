@@ -16,14 +16,21 @@ builder.Services.Configure<ControlApiOptions>(
     builder.Configuration.GetSection(ControlApiOptions.SectionName));
 builder.Services.Configure<MongoDbOptions>(
     builder.Configuration.GetSection(MongoDbOptions.SectionName));
+builder.Services.Configure<TokenSyncOptions>(
+    builder.Configuration.GetSection(TokenSyncOptions.SectionName));
 
 // MongoDB (읽기 전용)
 builder.Services.AddSingleton<MongoDbContext>();
-builder.Services.AddSingleton<MongoQueryService>();
+// IMongoQueryService: 인터페이스로 등록해 페이지·서비스·테스트 모두에서 주입 가능
+builder.Services.AddSingleton<IMongoQueryService, MongoQueryService>();
+builder.Services.AddSingleton<MongoQueryService>(sp => (MongoQueryService)sp.GetRequiredService<IMongoQueryService>());
 
 // Dashboard services
 builder.Services.AddSingleton<DashboardStateService>();
 builder.Services.AddHostedService<TcpEventReceiver>();
+// TokenSyncService: singleton 등록 후 HostedService로도 등록 (UI에서 SyncNowAsync 직접 호출 가능)
+builder.Services.AddSingleton<TokenSyncService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<TokenSyncService>());
 
 // HTTP Control API 클라이언트
 builder.Services.AddHttpClient<ControlApiClient>((sp, http) =>

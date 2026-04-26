@@ -39,12 +39,12 @@ public class DashboardStateServiceTests
         _sut.Apply(new TokenUsageEvent("ctx-1", TokensIn: 100, TokensOut: 50, TokensCached: 10, Model: "gemini-pro"));
         _sut.Apply(new TokenUsageEvent("ctx-1", TokensIn: 200, TokensOut: 80, TokensCached: 20, Model: "gemini-pro"));
 
-        var summaries = _sut.TokenSummaries;
-        Assert.Single(summaries);
-        Assert.Equal(300, summaries[0].TotalIn);
-        Assert.Equal(130, summaries[0].TotalOut);
-        Assert.Equal(30, summaries[0].TotalCached);
-        Assert.Equal(2, summaries[0].RequestCount);
+        var delta = _sut.TokenDelta;
+        Assert.Single(delta);
+        Assert.Equal(300, delta[0].TotalIn);
+        Assert.Equal(130, delta[0].TotalOut);
+        Assert.Equal(30, delta[0].TotalCached);
+        Assert.Equal(2, delta[0].RequestCount);
         Assert.Equal("gemini-pro", _sut.CurrentModel);
     }
 
@@ -54,7 +54,51 @@ public class DashboardStateServiceTests
         _sut.Apply(new TokenUsageEvent("ctx-1", 100, 50, 0, "m1"));
         _sut.Apply(new TokenUsageEvent("ctx-2", 200, 80, 0, "m1"));
 
-        Assert.Equal(2, _sut.TokenSummaries.Count);
+        Assert.Equal(2, _sut.TokenDelta.Count);
+    }
+
+    [Fact]
+    public void SyncBaseline_UpdatesBaseline_AndClearsDelta()
+    {
+        // delta 먼저 쌓기
+        _sut.Apply(new TokenUsageEvent("ctx-1", 100, 50, 10, "m1"));
+        Assert.Single(_sut.TokenDelta);
+
+        // baseline sync
+        _sut.SyncBaseline(1000, 500, 100, 10);
+
+        var b = _sut.Baseline;
+        Assert.True(b.IsLoaded);
+        Assert.Equal(1000, b.TotalIn);
+        Assert.Equal(500, b.TotalOut);
+        Assert.Equal(100, b.TotalCached);
+        Assert.Equal(10, b.RecordCount);
+        // delta 리셋 확인
+        Assert.Empty(_sut.TokenDelta);
+    }
+
+    [Fact]
+    public void SyncBaseline_FiresOnChange()
+    {
+        var fired = false;
+        _sut.OnChange += () => fired = true;
+
+        _sut.SyncBaseline(100, 50, 10, 1);
+
+        Assert.True(fired);
+    }
+
+    [Fact]
+    public void DeltaTotal_SumsAcrossContexts()
+    {
+        _sut.Apply(new TokenUsageEvent("ctx-1", 100, 50, 10, "m1"));
+        _sut.Apply(new TokenUsageEvent("ctx-2", 200, 80, 20, "m1"));
+
+        var (dIn, dOut, dCached, dReq) = _sut.DeltaTotal;
+        Assert.Equal(300, dIn);
+        Assert.Equal(130, dOut);
+        Assert.Equal(30, dCached);
+        Assert.Equal(2, dReq);
     }
 
     [Fact]

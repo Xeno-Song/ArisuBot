@@ -98,4 +98,86 @@ public class LlmTcpServerTests
         Assert.Contains("\"currentModel\"", json);
         Assert.Contains("\"previousModel\"", json);
     }
+
+    // --- 신규 이벤트 직렬화 ---
+
+    [Fact]
+    public void Serialize_ProcessingStartedEvent_IncludesTypeDiscriminator()
+    {
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var evt  = new ProcessingStartedEvent("ctx-1", 3);
+
+        var json = JsonSerializer.Serialize<LlmMonitorEvent>(evt, opts);
+
+        Assert.Contains("PROCESSING_STARTED", json);
+        Assert.Contains("\"contextId\"", json);
+        Assert.Contains("\"messageCount\"", json);
+    }
+
+    [Fact]
+    public void Serialize_ProcessingCompletedEvent_IncludesTypeDiscriminator()
+    {
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var evt  = new ProcessingCompletedEvent("ctx-1", 250L);
+
+        var json = JsonSerializer.Serialize<LlmMonitorEvent>(evt, opts);
+
+        Assert.Contains("PROCESSING_COMPLETED", json);
+        Assert.Contains("\"durationMs\"", json);
+    }
+
+    [Fact]
+    public void Serialize_ToolCallStartedEvent_IncludesTypeDiscriminator()
+    {
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var evt  = new ToolCallStartedEvent("ctx-1", "discord_timeout_user", "{\"user\":\"xeno\"}");
+
+        var json = JsonSerializer.Serialize<LlmMonitorEvent>(evt, opts);
+
+        Assert.Contains("TOOL_CALL_STARTED", json);
+        Assert.Contains("\"toolName\"", json);
+        Assert.Contains("\"argumentsJson\"", json);
+    }
+
+    [Fact]
+    public void Serialize_ToolCallCompletedEvent_IncludesTypeDiscriminator()
+    {
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var evt  = new ToolCallCompletedEvent("ctx-1", "discord_timeout_user", 120L);
+
+        var json = JsonSerializer.Serialize<LlmMonitorEvent>(evt, opts);
+
+        Assert.Contains("TOOL_CALL_COMPLETED", json);
+        Assert.Contains("\"toolName\"", json);
+        Assert.Contains("\"durationMs\"", json);
+    }
+
+    [Fact]
+    public void Serialize_ToolCallFailedEvent_IncludesTypeDiscriminator()
+    {
+        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var evt  = new ToolCallFailedEvent("ctx-1", "discord_timeout_user", "permission denied", 30L);
+
+        var json = JsonSerializer.Serialize<LlmMonitorEvent>(evt, opts);
+
+        Assert.Contains("TOOL_CALL_FAILED", json);
+        Assert.Contains("\"toolName\"", json);
+        Assert.Contains("\"errorMessage\"", json);
+    }
+
+    [Fact]
+    public void EmitProcessingStarted_DoesNotThrow()
+    {
+        var sut = CreateSut();
+        var ex  = Record.Exception(() => sut.EmitProcessingStarted("ctx-1", 2));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void EmitProcessingCompleted_DoesNotThrow()
+    {
+        var sut = CreateSut();
+        var ex  = Record.Exception(() => sut.EmitProcessingCompleted("ctx-1", 300L));
+        Assert.Null(ex);
+    }
 }

@@ -308,7 +308,9 @@ public class GeminiProvider : ILLMProvider
                 if (tool is null)
                     _logger.LogWarning("알 수 없는 툴 이름 — toolName={ToolName}", fc.Name);
 
-                var args = fc.Args ?? new Dictionary<string, object>();
+                var args        = fc.Args ?? new Dictionary<string, object>();
+                var argsJson    = JsonSerializer.Serialize(args);
+                var toolSw      = System.Diagnostics.Stopwatch.StartNew();
 
                 // ToolCall 이력 기록 — 첫 호출에만 thought metadata 첨부 (한 iteration 당 1회)
                 toolCallHistory.Add(new ChatMessage
@@ -316,20 +318,37 @@ public class GeminiProvider : ILLMProvider
                     Role                 = Role.ToolCall,
                     CallId               = callId,
                     ToolName             = fc.Name,
-                    ToolArgsJson         = JsonSerializer.Serialize(args),
+                    ToolArgsJson         = argsJson,
                     ProviderMetadataJson = fcIndex == 0 ? providerMetadataJson : null
                 });
+
+                _pipeServer.Emit(new ToolCallStartedEvent(
+                    ContextId:    contextId,
+                    ToolName:     fc.Name ?? string.Empty,
+                    ArgumentsJson: argsJson));
 
                 ToolResult toolResult;
                 if (tool is null)
                 {
-                    toolResult = ToolResult.Fail($"알 수 없는 툴 '{fc.Name}'");
+                    toolSw.Stop();
+                    var unknownMsg = $"알 수 없는 툴 '{fc.Name}'";
+                    _pipeServer.Emit(new ToolCallFailedEvent(
+                        ContextId:    contextId,
+                        ToolName:     fc.Name ?? string.Empty,
+                        ErrorMessage: unknownMsg,
+                        DurationMs:   toolSw.ElapsedMilliseconds));
+                    toolResult = ToolResult.Fail(unknownMsg);
                 }
                 else
                 {
                     try
                     {
                         toolResult = await tool.ExecuteAsync(args, toolContext!, ct);
+                        toolSw.Stop();
+                        _pipeServer.Emit(new ToolCallCompletedEvent(
+                            ContextId:  contextId,
+                            ToolName:   fc.Name ?? string.Empty,
+                            DurationMs: toolSw.ElapsedMilliseconds));
                     }
                     catch (OperationCanceledException)
                     {
@@ -337,6 +356,7 @@ public class GeminiProvider : ILLMProvider
                     }
                     catch (Exception ex)
                     {
+                        toolSw.Stop();
                         // 예측 불가능한 런타임 예외 — LLM iteration 유지를 위해 ToolResult.Fail로 변환
                         _logger.LogError(ex, "툴 실행 예외 — callId={CallId} tool={ToolName}", callId, fc.Name);
                         _ = _errorLogger.LogAsync(new ErrorLogEntry
@@ -347,6 +367,11 @@ public class GeminiProvider : ILLMProvider
                             Details   = ex.ToString(),
                             ContextId = contextId
                         });
+                        _pipeServer.Emit(new ToolCallFailedEvent(
+                            ContextId:    contextId,
+                            ToolName:     fc.Name ?? string.Empty,
+                            ErrorMessage: ex.Message,
+                            DurationMs:   toolSw.ElapsedMilliseconds));
                         toolResult = ToolResult.Fail(ex.Message);
                     }
                 }

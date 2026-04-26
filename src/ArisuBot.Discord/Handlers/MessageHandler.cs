@@ -28,6 +28,7 @@ public class MessageHandler
     private readonly IPromptLoader _promptLoader;
     private readonly ICompactionService _compactionService;
     private readonly CompactionTriggerEvaluator _triggerEvaluator;
+    private readonly IProcessingEventEmitter _processingEmitter;
     private readonly ILogger<MessageHandler> _logger;
 
     // Session Resume 등으로 인한 동일 메시지 중복 처리 방지
@@ -50,6 +51,7 @@ public class MessageHandler
         IPromptLoader promptLoader,
         ICompactionService compactionService,
         CompactionTriggerEvaluator triggerEvaluator,
+        IProcessingEventEmitter processingEmitter,
         ILogger<MessageHandler> logger)
     {
         _client              = client;
@@ -64,6 +66,7 @@ public class MessageHandler
         _promptLoader        = promptLoader;
         _compactionService   = compactionService;
         _triggerEvaluator    = triggerEvaluator;
+        _processingEmitter   = processingEmitter;
         _logger              = logger;
     }
 
@@ -214,6 +217,7 @@ public class MessageHandler
         ulong guildId)
     {
         var firstMsg = batch[0].Message;
+        var batchSw  = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
@@ -266,6 +270,8 @@ public class MessageHandler
             _logger.LogInformation(
                 "LLM 호출 시작 — channelId={ChannelId} batchSize={BatchSize} toolsEnabled={ToolsEnabled} messageCount={MessageCount} cacheMode={CacheMode}",
                 firstMsg.Channel.Id, batch.Count, toolContext is not null, messages.Count, cacheHint is not null);
+
+            _processingEmitter.EmitProcessingStarted(context.Id, batch.Count);
 
             // 멘션이 있는 첫 번째 메시지 기준 reply — 없으면 일반 메시지
             var mentionMsg = batch.FirstOrDefault(p => p.IsMention);
@@ -328,6 +334,9 @@ public class MessageHandler
             await _messageLogger.LogAsync(
                 guildId, targetId, firstMsg.Author.Id,
                 combinedUserContent, processedContent, providerName);
+
+            batchSw.Stop();
+            _processingEmitter.EmitProcessingCompleted(context.Id, batchSw.ElapsedMilliseconds);
 
             // Compaction 트리거 평가 — token 기반 트리거만 인라인 처리 (inactivity/scheduled는 BackgroundService)
             if (_triggerEvaluator.IsTokenThresholdMet(context) &&

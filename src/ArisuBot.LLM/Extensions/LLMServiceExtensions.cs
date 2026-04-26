@@ -33,10 +33,11 @@ public static class LLMServiceExtensions
 
         services.Configure<MonitorServerOptions>(configuration.GetSection(MonitorServerOptions.SectionName));
 
-        // LlmTcpServer: Monitor Sidecar에 이벤트 전달. IHostedService로 TCP 서버 루프 관리.
-        // ILlmMonitorServer + IHostedService 양쪽 등록 — Sidecar 미연결 시 이벤트 drop (선택 실행 지원)
+        // LlmTcpServer: Monitor/Dashboard Sidecar에 이벤트 전달. IHostedService로 TCP 서버 루프 관리.
+        // ILlmMonitorServer + IProcessingEventEmitter + IHostedService 등록 — Sidecar 미연결 시 이벤트 drop
         services.AddSingleton<LlmTcpServer>();
         services.AddSingleton<ILlmMonitorServer>(sp => sp.GetRequiredService<LlmTcpServer>());
+        services.AddSingleton<IProcessingEventEmitter>(sp => sp.GetRequiredService<LlmTcpServer>());
         services.AddHostedService(sp => sp.GetRequiredService<LlmTcpServer>());
 
         // GeminiProvider

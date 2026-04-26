@@ -152,6 +152,18 @@ public class LlmMonitorApp
                     AddEventLog($"CREATED  {ShortName(e.CacheName)}  ({Short(e.ContextId)})");
                     break;
 
+                case CacheExtendedEvent e:
+                    if (_caches.TryGetValue(e.CacheName, out var existing))
+                        _caches[e.CacheName] = new CacheEntry
+                        {
+                            CacheName  = existing.CacheName,
+                            TokenCount = existing.TokenCount,
+                            ContextId  = existing.ContextId,
+                            ExpiresAt  = e.NewExpiresAt
+                        };
+                    AddEventLog($"EXTENDED {ShortName(e.CacheName)}  → {e.NewExpiresAt:HH:mm:ss}");
+                    break;
+
                 case CacheDeletedEvent e:
                     _caches.Remove(e.CacheName);
                     AddEventLog($"DELETED  {ShortName(e.CacheName)}  ({e.Reason})");

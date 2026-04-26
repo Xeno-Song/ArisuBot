@@ -4,10 +4,11 @@ namespace ArisuBot.LLM.Monitoring;
 
 /// <summary>Named Pipe로 LLM Monitor Sidecar에 전송하는 이벤트 기반 클래스.</summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
-[JsonDerivedType(typeof(CacheCreatedEvent), "CACHE_CREATED")]
-[JsonDerivedType(typeof(CacheDeletedEvent), "CACHE_DELETED")]
-[JsonDerivedType(typeof(TokenUsageEvent), "TOKEN_USAGE")]
-[JsonDerivedType(typeof(ModelStatusEvent), "MODEL_STATUS")]
+[JsonDerivedType(typeof(CacheCreatedEvent),  "CACHE_CREATED")]
+[JsonDerivedType(typeof(CacheDeletedEvent),  "CACHE_DELETED")]
+[JsonDerivedType(typeof(CacheExtendedEvent), "CACHE_EXTENDED")]
+[JsonDerivedType(typeof(TokenUsageEvent),    "TOKEN_USAGE")]
+[JsonDerivedType(typeof(ModelStatusEvent),   "MODEL_STATUS")]
 public abstract record LlmMonitorEvent(DateTimeOffset Timestamp);
 
 /// <summary>Gemini 명시적 캐시 생성 시 발행.</summary>
@@ -16,6 +17,12 @@ public sealed record CacheCreatedEvent(
     int TokenCount,
     string ContextId,
     DateTimeOffset ExpiresAt)
+    : LlmMonitorEvent(DateTimeOffset.UtcNow);
+
+/// <summary>Gemini 명시적 캐시 TTL 연장 성공 시 발행.</summary>
+public sealed record CacheExtendedEvent(
+    string CacheName,
+    DateTimeOffset NewExpiresAt)
     : LlmMonitorEvent(DateTimeOffset.UtcNow);
 
 /// <summary>Gemini 명시적 캐시 삭제 시 발행.</summary>

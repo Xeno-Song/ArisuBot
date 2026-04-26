@@ -209,6 +209,10 @@ public class GeminiCacheManager : ILLMCacheManager
                 : null;
             _logger.LogDebug("캐시 TTL 연장 완료 — name={CacheName} newExpiresAt={ExpiresAt}",
                 context.DynamicCacheRef, context.CacheExpiresAt);
+            if (context.CacheExpiresAt.HasValue)
+                _pipeServer.Emit(new CacheExtendedEvent(
+                    CacheName:    context.DynamicCacheRef!,
+                    NewExpiresAt: context.CacheExpiresAt.Value));
         }
         catch (Exception ex)
         {

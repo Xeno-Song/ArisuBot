@@ -432,6 +432,9 @@ public class GeminiCacheManagerTests
             It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         // CacheExpiresAt 갱신 — DateTime → DateTimeOffset 변환 후 비교
         Assert.Equal(new DateTimeOffset(newExpiry, TimeSpan.Zero), context.CacheExpiresAt);
+        // CacheExtendedEvent emit 확인
+        _pipeMock.Verify(p => p.Emit(It.Is<CacheExtendedEvent>(
+            e => e.CacheName == "caches/existing")), Times.Once);
     }
 
     [Fact]

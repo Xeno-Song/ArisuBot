@@ -408,3 +408,25 @@ hasExistingCache=true
 **호환성**: `CacheExpiresAt` 필드 신규 추가. `[BsonIgnoreIfNull]` + `[BsonIgnoreExtraElements]` 기적용으로 기존 MongoDB 문서 역직렬화 시 `null` → 만료로 간주 → ref 클리어 후 신규 생성 경로 진입.
 
 전체 테스트: 212개 통과 (추가 전 대비 +6개).
+
+---
+
+### 2026-04-26 Monitor TTL 연장 이벤트 반영
+
+**배경**: TTL 연장 후 Monitor UI가 원래 만료 시각을 계속 표시해 TTL 카운트다운이 음수가 되는 문제.
+
+**변경 내용**
+
+| 파일 | 변경 |
+|---|---|
+| `LlmMonitorEvent.cs` | `CacheExtendedEvent(CacheName, NewExpiresAt)` 추가 + `[JsonDerivedType("CACHE_EXTENDED")]` 등록 |
+| `GeminiCacheManager.cs` | `TryExtendCacheTtlAsync` 성공 시 `CacheExtendedEvent` emit |
+| `LlmMonitorApp.cs` | `CacheExtendedEvent` 수신 시 해당 `CacheEntry.ExpiresAt` 갱신, 이벤트 로그에 `EXTENDED` 기록 |
+| `GeminiCacheManagerTests.cs` | TTL 연장 케이스에 `CacheExtendedEvent` emit 검증 추가 |
+
+**Monitor 이벤트 로그 표시 예시**
+```
+  15:42:11  EXTENDED abc123  → 16:12:11
+```
+
+전체 테스트: 212개 통과.

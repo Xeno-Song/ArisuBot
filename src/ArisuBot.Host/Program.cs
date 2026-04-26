@@ -18,10 +18,12 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Options;
 
 // Bot 진입점. DI 구성, HTTP Control API 서버(port 9877), 호스트 시작.
-var builder = WebApplication.CreateBuilder(args);
-
-// 실행 파일 위치를 content root로 설정 — appsettings.json이 복사된 bin/Debug/net8.0/ 탐색
-builder.Host.UseContentRoot(AppContext.BaseDirectory);
+// ContentRootPath: 실행 파일 위치 지정 — appsettings.json이 복사된 bin/Debug/net8.0/ 탐색
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args            = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
 builder.Configuration
     .AddJsonFile("appsettings.json", optional: false)

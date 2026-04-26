@@ -14,14 +14,15 @@ public class GeminiProviderGenerateTests
 {
     private readonly Mock<IGeminiStreamClient> _streamMock = new();
     private readonly Mock<ILlmMonitorServer> _pipeMock = new();
+    private readonly Mock<IErrorLogger> _errorLoggerMock = new();
     private readonly GeminiProvider _sut;
 
     public GeminiProviderGenerateTests()
     {
         var geminiOpts = Options.Create(new GeminiOptions { Model = "test-model", ApiKey = "key" });
         var llmOpts = Options.Create(new LLMOptions { MaxTokens = 100, Temperature = 0.5f });
-        _sut = new GeminiProvider(_streamMock.Object, _pipeMock.Object, geminiOpts, llmOpts,
-            new Mock<ILogger<GeminiProvider>>().Object);
+        _sut = new GeminiProvider(_streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object,
+            geminiOpts, llmOpts, new Mock<ILogger<GeminiProvider>>().Object);
     }
 
     private static async IAsyncEnumerable<GenerateContentResponse> ToAsyncEnumerable(

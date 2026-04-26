@@ -17,6 +17,7 @@ public class GeminiProvider : ILLMProvider
 {
     private readonly IGeminiStreamClient _streamClient;
     private readonly ILlmMonitorServer _pipeServer;
+    private readonly IErrorLogger _errorLogger;
     private readonly GeminiOptions _geminiOptions;
     private readonly LLMOptions _llmOptions;
     private readonly ILogger<GeminiProvider> _logger;
@@ -26,12 +27,14 @@ public class GeminiProvider : ILLMProvider
     public GeminiProvider(
         IGeminiStreamClient streamClient,
         ILlmMonitorServer pipeServer,
+        IErrorLogger errorLogger,
         IOptions<GeminiOptions> geminiOptions,
         IOptions<LLMOptions> llmOptions,
         ILogger<GeminiProvider> logger)
     {
         _streamClient   = streamClient;
         _pipeServer     = pipeServer;
+        _errorLogger    = errorLogger;
         _geminiOptions  = geminiOptions.Value;
         _llmOptions     = llmOptions.Value;
         _logger         = logger;
@@ -164,6 +167,14 @@ public class GeminiProvider : ILLMProvider
                 {
                     // 4xx ClientError — 재시도 없이 즉시 실패. 상세 원인은 exception 메시지에서 확인
                     _logger.LogError(ex, "Gemini ClientError — model={Model} iteration={Iteration}", currentModel, iteration);
+                    _ = _errorLogger.LogAsync(new ErrorLogEntry
+                    {
+                        ErrorType = ErrorType.LLMError,
+                        Source    = nameof(GeminiProvider),
+                        Message   = ex.Message,
+                        Details   = ex.ToString(),
+                        ContextId = contextId
+                    });
                     throw;
                 }
                 catch (ServerError ex)
@@ -181,7 +192,18 @@ public class GeminiProvider : ILLMProvider
 
                     // 재시도 소진 — fallback 전환 시도
                     if (_geminiOptions.FallbackModel is null || currentModel == _geminiOptions.FallbackModel)
-                        throw; // fallback 없거나 이미 fallback 중이면 최종 실패
+                    {
+                        // fallback 없거나 이미 fallback 중이면 최종 실패
+                        _ = _errorLogger.LogAsync(new ErrorLogEntry
+                        {
+                            ErrorType = ErrorType.LLMError,
+                            Source    = nameof(GeminiProvider),
+                            Message   = ex.Message,
+                            Details   = ex.ToString(),
+                            ContextId = contextId
+                        });
+                        throw;
+                    }
 
                     _logger.LogWarning(ex,
                         "Fallback 모델 전환 — from={Primary} to={Fallback}",
@@ -317,6 +339,14 @@ public class GeminiProvider : ILLMProvider
                     {
                         // 예측 불가능한 런타임 예외 — LLM iteration 유지를 위해 ToolResult.Fail로 변환
                         _logger.LogError(ex, "툴 실행 예외 — callId={CallId} tool={ToolName}", callId, fc.Name);
+                        _ = _errorLogger.LogAsync(new ErrorLogEntry
+                        {
+                            ErrorType = ErrorType.ToolError,
+                            Source    = fc.Name ?? nameof(GeminiProvider),
+                            Message   = ex.Message,
+                            Details   = ex.ToString(),
+                            ContextId = contextId
+                        });
                         toolResult = ToolResult.Fail(ex.Message);
                     }
                 }

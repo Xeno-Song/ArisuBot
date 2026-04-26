@@ -50,6 +50,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<MongoDbContext>();
         services.AddSingleton<IConversationRepository, ConversationRepository>();
         services.AddSingleton<IAIMessageLogger, AIMessageLogger>();
+        services.AddSingleton<IErrorLogger, ErrorLogger>();
 
         // Infrastructure — Prompts (봇 시작 시 파일 로드, /new-session으로 재로드)
         // 개발 환경: bin/Debug/net8.0/에서 ../../../ 로 올라가면 프로젝트 소스 디렉터리.

@@ -49,6 +49,13 @@ public class GeminiStreamClient : IGeminiStreamClient, IGeminiCacheClient
         return _client.Caches.CreateAsync(model: model, config: config, cancellationToken: ct);
     }
 
+    /// <summary>명시적 캐시의 TTL을 연장한다.</summary>
+    public Task<CachedContent> UpdateAsync(string cacheName, string ttl, CancellationToken ct = default)
+        => _client.Caches.UpdateAsync(
+            name:              cacheName,
+            config:            new UpdateCachedContentConfig { Ttl = ttl },
+            cancellationToken: ct);
+
     /// <summary>명시적 캐시를 삭제한다.</summary>
     public Task DeleteAsync(string cacheName, CancellationToken ct = default)
         => _client.Caches.DeleteAsync(name: cacheName, cancellationToken: ct);

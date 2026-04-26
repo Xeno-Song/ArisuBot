@@ -372,3 +372,61 @@ Docker 환경 배포 시 Named Pipe는 컨테이너 간 IPC 불가. TCP로 전�
 1. **시작 시 stale `dynamicCacheRef`**: TTL=300s로 봇 재시작 시 MongoDB에 남은 구 cache ref가 Gemini 측에는 이미 만료 → `GeminiCacheCleanupService.StartAsync`에서 `ClearAllDynamicCacheRefsAsync` 호출하여 MongoDB 초기화
 2. **System prompt 우선순위**: `BuildMessageList`가 항상 파일에서 system prompt를 새로 읽어 cache prefix 바이트 불일치 유발 → DB에 저장된 system message 우선 사용, 없을 때만 파일 fallback
 3. **연속 User 메시지 시 contents 비어있는 오류**: cache 경계가 User로 끝나면 `BuildContents().Skip(N)` 결과가 빈 리스트 → trailing User trim으로 cache는 항상 model role로 종료, Skip 후 새 user Content 최소 1개 보장
+
+---
+
+### 2026-04-26 TTL 연장 및 캐시 만료 감지 구현
+
+**배경**: 봇 실행 중 TTL(1800s) 경과 후 `DynamicCacheRef`가 스테일 상태로 남아 `CachedContent not found` ClientError 발생. 원인: 캐시 만료 시각 미저장 + TTL 연장 미구현.
+
+**변경 내용**
+
+| 파일 | 변경 |
+|---|---|
+| `IGeminiCacheClient.cs` | `UpdateAsync(string cacheName, string ttl, CancellationToken ct)` 추가 |
+| `GeminiStreamClient.cs` | `UpdateAsync` 구현 — `_client.Caches.UpdateAsync(name, UpdateCachedContentConfig{Ttl}, ct)` |
+| `ConversationContext.cs` | `CacheExpiresAt` (`DateTimeOffset?`) 추가. null = 만료 시각 불명 |
+| `ConversationDocument.cs` | `CacheExpiresAt` BSON 매핑 (`[BsonIgnoreIfNull]`) + `ToDomain`/`FromDomain` 갱신 |
+| `GeminiCacheManager.cs` | 만료 감지 분기 + `TryExtendCacheTtlAsync` 헬퍼 추가. 신규 캐시 생성 후 `context.CacheExpiresAt = newCache.ExpireTime` 저장 |
+| `GeminiCacheManagerTests.cs` | `MakeContext`에 `cacheExpiresAt` 파라미터 추가. 신규 케이스 6개 추가 |
+
+**새 캐시 재사용 분기 흐름**
+
+```
+hasExistingCache=true
+├─ CacheExpiresAt==null OR UtcNow >= CacheExpiresAt  [만료/불명]
+│   → DynamicCacheRef / CachedMessageCount / CacheExpiresAt 클리어
+│   → hasExistingCache=false로 재진입 (초기 임계값/velocity 조건 적용)
+└─ 유효
+    ├─ UncachedTokenCount >= RefreshThresholdTokens → Rolling (기존 로직)
+    └─ UncachedTokenCount < RefreshThresholdTokens
+        → UpdateAsync TTL 연장
+          성공: context.CacheExpiresAt = result.ExpireTime 갱신, hint 반환
+          실패: LogWarning, 기존 hint 반환 (예외 미전파)
+```
+
+**호환성**: `CacheExpiresAt` 필드 신규 추가. `[BsonIgnoreIfNull]` + `[BsonIgnoreExtraElements]` 기적용으로 기존 MongoDB 문서 역직렬화 시 `null` → 만료로 간주 → ref 클리어 후 신규 생성 경로 진입.
+
+전체 테스트: 212개 통과 (추가 전 대비 +6개).
+
+---
+
+### 2026-04-26 Monitor TTL 연장 이벤트 반영
+
+**배경**: TTL 연장 후 Monitor UI가 원래 만료 시각을 계속 표시해 TTL 카운트다운이 음수가 되는 문제.
+
+**변경 내용**
+
+| 파일 | 변경 |
+|---|---|
+| `LlmMonitorEvent.cs` | `CacheExtendedEvent(CacheName, NewExpiresAt)` 추가 + `[JsonDerivedType("CACHE_EXTENDED")]` 등록 |
+| `GeminiCacheManager.cs` | `TryExtendCacheTtlAsync` 성공 시 `CacheExtendedEvent` emit |
+| `LlmMonitorApp.cs` | `CacheExtendedEvent` 수신 시 해당 `CacheEntry.ExpiresAt` 갱신, 이벤트 로그에 `EXTENDED` 기록 |
+| `GeminiCacheManagerTests.cs` | TTL 연장 케이스에 `CacheExtendedEvent` emit 검증 추가 |
+
+**Monitor 이벤트 로그 표시 예시**
+```
+  15:42:11  EXTENDED abc123  → 16:12:11
+```
+
+전체 테스트: 212개 통과.

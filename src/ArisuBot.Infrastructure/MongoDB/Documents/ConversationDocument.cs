@@ -61,6 +61,11 @@ public class ConversationDocument
     [BsonElement("lastTotalTokens")]
     public int LastTotalTokens { get; set; }
 
+    /// <summary>DynamicCacheRef의 만료 시각 (UTC). null이면 만료 시각 불명.</summary>
+    [BsonElement("cacheExpiresAt")]
+    [BsonIgnoreIfNull]
+    public DateTime? CacheExpiresAt { get; set; }
+
     // --- Compaction 결과 저장 ---
 
     /// <summary>Compaction 실행으로 추출된 대화 요약. 기존 문서에 없으면 null.</summary>
@@ -93,6 +98,9 @@ public class ConversationDocument
         CachedMessageCount         = CachedMessageCount,
         UncachedTokenCount         = UncachedTokenCount,
         LastTotalTokens            = LastTotalTokens,
+        CacheExpiresAt             = CacheExpiresAt.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(CacheExpiresAt.Value, DateTimeKind.Utc))
+            : null,
         RecentMessageTimestamps    = RecentMessageTimestamps
             .Select(dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)))
             .ToList(),
@@ -121,6 +129,7 @@ public class ConversationDocument
         CachedMessageCount      = context.CachedMessageCount,
         UncachedTokenCount      = context.UncachedTokenCount,
         LastTotalTokens         = context.LastTotalTokens,
+        CacheExpiresAt          = context.CacheExpiresAt?.UtcDateTime,
         RecentMessageTimestamps = context.RecentMessageTimestamps
             .Select(dto => dto.UtcDateTime)
             .ToList(),

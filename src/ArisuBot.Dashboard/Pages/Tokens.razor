@@ -1,0 +1,132 @@
+@page "/tokens"
+@implements IDisposable
+@inject MongoQueryService Mongo
+@inject DashboardStateService State
+
+<PageTitle>토큰 집계 — ArisuBot</PageTitle>
+<h4>토큰 집계</h4>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="nav-link @(_tab == "realtime" ? "active" : "")"
+                @onclick='() => _tab = "realtime"'>실시간</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(_tab == "history" ? "active" : "")"
+                @onclick="SwitchToHistory">전체 히스토리 (MongoDB)</button>
+    </li>
+</ul>
+
+@if (_tab == "realtime")
+{
+    var summaries = State.TokenSummaries;
+    if (!summaries.Any())
+    {
+        <p class="text-muted">이번 세션에서 토큰 사용 기록 없음</p>
+    }
+    else
+    {
+        var totalIn     = summaries.Sum(s => s.TotalIn);
+        var totalOut    = summaries.Sum(s => s.TotalOut);
+        var totalCached = summaries.Sum(s => s.TotalCached);
+
+        <div class="card mb-3">
+            <div class="card-body">
+                <strong>합계</strong> — In: @totalIn.ToString("N0")  Out: @totalOut.ToString("N0")  Cached: @totalCached.ToString("N0")
+                &nbsp;|&nbsp; 총 토큰: @((totalIn + totalOut).ToString("N0"))
+            </div>
+        </div>
+
+        <table class="table table-sm">
+            <thead>
+                <tr><th>컨텍스트</th><th>요청 수</th><th>In</th><th>Out</th><th>Cached</th><th>합계</th><th>최종 활동</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var s in summaries)
+                {
+                    <tr>
+                        <td><code class="small">@Short(s.ContextId)</code></td>
+                        <td>@s.RequestCount</td>
+                        <td>@s.TotalIn.ToString("N0")</td>
+                        <td>@s.TotalOut.ToString("N0")</td>
+                        <td>@s.TotalCached.ToString("N0")</td>
+                        <td>@((s.TotalIn + s.TotalOut).ToString("N0"))</td>
+                        <td class="small">@s.LastActivity.ToLocalTime().ToString("HH:mm:ss")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    @if (_loading)
+    {
+        <p class="text-muted">로딩 중...</p>
+    }
+    else if (_error is not null)
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+    else if (_aggregate is not null)
+    {
+        <div class="card mb-3">
+            <div class="card-header">전체 누적 토큰 (MongoDB 기준)</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                        <tr><td>총 입력 토큰</td><td class="text-end">@_aggregate.TotalIn.ToString("N0")</td></tr>
+                        <tr><td>총 출력 토큰</td><td class="text-end">@_aggregate.TotalOut.ToString("N0")</td></tr>
+                        <tr><td>총 캐시 적중 토큰</td><td class="text-end">@_aggregate.TotalCachedIn.ToString("N0")</td></tr>
+                        <tr class="fw-bold"><td>합계 (In+Out)</td><td class="text-end">@_aggregate.TotalAll.ToString("N0")</td></tr>
+                        <tr><td>LLM 요청 수</td><td class="text-end">@_aggregate.RecordCount.ToString("N0")</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadHistoryAsync">새로고침</button>
+    }
+}
+
+@code {
+    private string _tab = "realtime";
+    private TokenAggregate? _aggregate;
+    private bool _loading;
+    private string? _error;
+
+    private static string Short(string id) =>
+        id.Length > 16 ? id[..16] + "…" : id;
+
+    protected override void OnInitialized()
+        => State.OnChange += HandleStateChange;
+
+    public void Dispose()
+        => State.OnChange -= HandleStateChange;
+
+    private void HandleStateChange()
+        => InvokeAsync(StateHasChanged);
+
+    private async Task SwitchToHistory()
+    {
+        _tab = "history";
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        _loading = true;
+        _error   = null;
+        try
+        {
+            _aggregate = await Mongo.GetTotalTokenAggregateAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"토큰 집계 로드 실패: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

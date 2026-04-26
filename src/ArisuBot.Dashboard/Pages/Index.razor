@@ -1,0 +1,97 @@
+@page "/"
+@implements IDisposable
+@inject DashboardStateService State
+
+<PageTitle>대시보드 — ArisuBot</PageTitle>
+
+<h4>대시보드
+    @if (State.IsConnected)
+    {
+        <span class="badge badge-connected ms-2">연결됨</span>
+    }
+    else
+    {
+        <span class="badge badge-disconnected ms-2">연결 끊김</span>
+    }
+</h4>
+
+<div class="row mt-3">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">현재 처리 상태</div>
+            <div class="card-body">
+                @if (!State.IsConnected)
+                {
+                    <p class="text-muted">Host에 연결되지 않았습니다. 자동 재연결 대기 중...</p>
+                }
+                else if (!State.ActiveProcessing.Any())
+                {
+                    <p class="text-muted">현재 처리 중인 요청 없음</p>
+                }
+                else
+                {
+                    <table class="table table-sm">
+                        <thead><tr><th>컨텍스트</th><th>메시지 수</th><th>경과</th></tr></thead>
+                        <tbody>
+                            @foreach (var p in State.ActiveProcessing)
+                            {
+                                <tr>
+                                    <td><code>@Short(p.ContextId)</code></td>
+                                    <td>@p.MessageCount</td>
+                                    <td>@((DateTimeOffset.UtcNow - p.StartedAt).TotalSeconds.ToString("F1"))s</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">모델 상태</div>
+            <div class="card-body">
+                <p><strong>현재 모델:</strong> @State.CurrentModel
+                    @if (State.IsFallback)
+                    {
+                        <span class="badge bg-warning text-dark ms-1">FALLBACK</span>
+                    }
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col">
+        <div class="card">
+            <div class="card-header">최근 이벤트</div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush" style="max-height:400px;overflow-y:auto">
+                    @foreach (var e in State.RecentEvents.Take(30))
+                    {
+                        <li class="list-group-item py-1 small">
+                            <span class="text-muted me-2">@e.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
+                            @e.Message
+                        </li>
+                    }
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static string Short(string id) =>
+        id.Length > 16 ? id[..16] + "…" : id;
+
+    protected override void OnInitialized()
+        => State.OnChange += HandleStateChange;
+
+    public void Dispose()
+        => State.OnChange -= HandleStateChange;
+
+    private void HandleStateChange()
+        => InvokeAsync(StateHasChanged);
+}

@@ -1,0 +1,53 @@
+.page {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    background-color: #343a40;
+    min-width: 180px;
+    color: #fff;
+}
+
+.sidebar .nav-link {
+    color: #ccc;
+    padding: 6px 12px;
+}
+
+.sidebar .nav-link:hover,
+.sidebar .nav-link.active {
+    color: #fff;
+    background-color: rgba(255,255,255,0.1);
+}
+
+main {
+    flex: 1;
+    overflow-x: auto;
+}
+
+.top-row {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    padding: 8px 16px;
+}
+
+.content {
+    padding: 16px;
+}
+
+.badge-connected { background-color: #28a745; }
+.badge-disconnected { background-color: #dc3545; }
+
+#blazor-error-ui {
+    background: #dc3545;
+    color: white;
+    padding: 8px 16px;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: none;
+    text-align: center;
+}
+
+#blazor-error-ui a { color: #fff; }

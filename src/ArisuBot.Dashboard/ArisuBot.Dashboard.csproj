@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ArisuBot.Dashboard</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- LLM 모니터 이벤트 타입 공유 -->
+    <ProjectReference Include="..\ArisuBot.LLM\ArisuBot.LLM.csproj" />
+    <!-- MongoDB 모델 · 컨텍스트 재사용 (읽기 전용) -->
+    <ProjectReference Include="..\ArisuBot.Infrastructure\ArisuBot.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

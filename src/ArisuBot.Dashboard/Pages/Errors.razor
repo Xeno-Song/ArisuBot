@@ -1,0 +1,113 @@
+@page "/errors"
+@implements IDisposable
+@inject MongoQueryService Mongo
+@inject DashboardStateService State
+
+<PageTitle>에러 로그 — ArisuBot</PageTitle>
+<h4>에러 로그</h4>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="nav-link @(_tab == "realtime" ? "active" : "")"
+                @onclick='() => _tab = "realtime"'>실시간 tool 에러</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(_tab == "history" ? "active" : "")"
+                @onclick="SwitchToHistory">히스토리 (MongoDB)</button>
+    </li>
+</ul>
+
+@if (_tab == "realtime")
+{
+    @if (!State.ToolErrors.Any())
+    {
+        <p class="text-muted">실시간 tool 에러 없음</p>
+    }
+    else
+    {
+        <table class="table table-sm">
+            <thead><tr><th>시각</th><th>Tool</th><th>에러</th><th>컨텍스트</th></tr></thead>
+            <tbody>
+                @foreach (var e in State.ToolErrors)
+                {
+                    <tr class="table-danger">
+                        <td class="small">@e.Timestamp.ToLocalTime().ToString("HH:mm:ss")</td>
+                        <td><code>@e.ToolName</code></td>
+                        <td>@e.ErrorMessage</td>
+                        <td class="small">@(e.ContextId is not null ? e.ContextId[..Math.Min(12, e.ContextId.Length)] : "-")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    @if (_historyLoading)
+    {
+        <p class="text-muted">로딩 중...</p>
+    }
+    else if (_historyError is not null)
+    {
+        <div class="alert alert-danger">@_historyError</div>
+    }
+    else
+    {
+        <table class="table table-sm">
+            <thead><tr><th>시각</th><th>타입</th><th>소스</th><th>메시지</th><th>컨텍스트</th></tr></thead>
+            <tbody>
+                @foreach (var e in _history)
+                {
+                    <tr>
+                        <td class="small">@e.Timestamp.ToLocalTime().ToString("MM-dd HH:mm:ss")</td>
+                        <td><span class="badge bg-secondary">@e.ErrorType</span></td>
+                        <td class="small">@e.Source</td>
+                        <td>@e.Message</td>
+                        <td class="small">@(e.ContextId is not null ? e.ContextId[..Math.Min(12, e.ContextId.Length)] : "-")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="LoadHistoryAsync">새로고침</button>
+    }
+}
+
+@code {
+    private string _tab = "realtime";
+    private List<ArisuBot.Infrastructure.MongoDB.Documents.ErrorLogDocument> _history = new();
+    private bool _historyLoading;
+    private string? _historyError;
+
+    protected override void OnInitialized()
+        => State.OnChange += HandleStateChange;
+
+    public void Dispose()
+        => State.OnChange -= HandleStateChange;
+
+    private void HandleStateChange()
+        => InvokeAsync(StateHasChanged);
+
+    private async Task SwitchToHistory()
+    {
+        _tab = "history";
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        _historyLoading = true;
+        _historyError   = null;
+        try
+        {
+            _history = await Mongo.GetRecentErrorsAsync();
+        }
+        catch (Exception ex)
+        {
+            _historyError = $"에러 로그 로드 실패: {ex.Message}";
+        }
+        finally
+        {
+            _historyLoading = false;
+        }
+    }
+}

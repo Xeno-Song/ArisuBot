@@ -1,0 +1,104 @@
+@page "/tools"
+@inject ControlApiClient ApiClient
+
+<PageTitle>도구 관리 — ArisuBot</PageTitle>
+<h4>도구 관리</h4>
+
+@if (_loading)
+{
+    <p class="text-muted">로딩 중...</p>
+}
+else if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else
+{
+    <p class="text-muted small">Host에 등록된 tool의 활성화 상태를 제어합니다. 비활성화된 tool은 LLM이 호출해도 실행이 거부됩니다.</p>
+
+    @if (!_tools.Any())
+    {
+        <p class="text-muted">등록된 tool 없음 (아직 tool이 한 번도 호출되지 않은 경우 목록이 비어 있습니다)</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr><th>Tool 이름</th><th>상태</th><th>제어</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var (name, enabled) in _tools)
+                {
+                    <tr>
+                        <td><code>@name</code></td>
+                        <td>
+                            @if (enabled)
+                            {
+                                <span class="badge bg-success">활성화</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">비활성화</span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-sm @(enabled ? "btn-outline-danger" : "btn-outline-success")"
+                                    @onclick="() => ToggleToolAsync(name, !enabled)"
+                                    disabled="@_busy">
+                                @(enabled ? "비활성화" : "활성화")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <button class="btn btn-outline-secondary btn-sm" @onclick="LoadAsync" disabled="@_busy">새로고침</button>
+}
+
+@code {
+    private Dictionary<string, bool> _tools = new();
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+        => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error   = null;
+        try
+        {
+            _tools = await ApiClient.GetToolsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Tool 목록 로드 실패: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ToggleToolAsync(string name, bool enabled)
+    {
+        _busy = true;
+        try
+        {
+            await ApiClient.SetToolEnabledAsync(name, enabled);
+            _tools[name] = enabled;
+        }
+        catch (Exception ex)
+        {
+            _error = $"상태 변경 실패: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

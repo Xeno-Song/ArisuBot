@@ -69,13 +69,29 @@ public class GeminiCacheManager : ILLMCacheManager
 
         var hasExistingCache = !string.IsNullOrEmpty(context.DynamicCacheRef);
 
-        // 기존 캐시 있음 + refresh 임계값 미달 → 기존 캐시 재사용
-        if (hasExistingCache &&
-            context.UncachedTokenCount < _cacheOptions.RefreshThresholdTokens)
+        // 기존 캐시 있음 → 만료 여부 판단
+        if (hasExistingCache)
         {
-            _logger.LogDebug("기존 캐시 재사용 — name={CacheName} uncachedTokens={Tokens} refreshThreshold={Threshold}",
-                context.DynamicCacheRef, context.UncachedTokenCount, _cacheOptions.RefreshThresholdTokens);
-            return new CacheHint(context.DynamicCacheRef, context.CachedMessageCount);
+            var isExpired = context.CacheExpiresAt is null ||
+                            DateTimeOffset.UtcNow >= context.CacheExpiresAt.Value;
+
+            if (isExpired)
+            {
+                // 만료(또는 만료 시각 불명) → ref 클리어 후 신규 생성 경로로 재진입
+                _logger.LogInformation("캐시 만료 감지 — name={CacheName} expiresAt={ExpiresAt} — ref 클리어 후 신규 생성 시도",
+                    context.DynamicCacheRef, context.CacheExpiresAt);
+                context.DynamicCacheRef    = null;
+                context.CachedMessageCount = 0;
+                context.CacheExpiresAt     = null;
+                hasExistingCache           = false;
+                // hasExistingCache=false로 아래 분기 재진입
+            }
+            else if (context.UncachedTokenCount < _cacheOptions.RefreshThresholdTokens)
+            {
+                // 유효 + refresh 임계값 미달 → TTL 연장 후 기존 hint 반환
+                return await TryExtendCacheTtlAsync(context);
+            }
+            // 유효 + refresh 임계값 이상 → 아래 rolling 경로 진입 (기존 로직)
         }
 
         // 기존 캐시 없음 + initial 임계값 미달 → no cache
@@ -171,8 +187,35 @@ public class GeminiCacheManager : ILLMCacheManager
         context.DynamicCacheRef      = newCache.Name!;
         context.CachedMessageCount   = cachedContentCount;
         context.UncachedTokenCount   = 0;
+        context.CacheExpiresAt       = newCache.ExpireTime.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(newCache.ExpireTime.Value, DateTimeKind.Utc))
+            : null;
 
         return new CacheHint(newCache.Name!, cachedContentCount);
+    }
+
+    /// <summary>
+    /// 기존 캐시의 TTL을 연장한다. 성공 시 CacheExpiresAt을 갱신하고 기존 hint를 반환한다.
+    /// 연장 실패 시 경고 로그만 기록하고 기존 hint를 그대로 반환한다.
+    /// </summary>
+    private async Task<CacheHint> TryExtendCacheTtlAsync(ConversationContext context)
+    {
+        var ttl = $"{_cacheOptions.TtlSeconds}s";
+        try
+        {
+            var updated = await _cacheClient.UpdateAsync(context.DynamicCacheRef!, ttl);
+            context.CacheExpiresAt = updated.ExpireTime.HasValue
+                ? new DateTimeOffset(DateTime.SpecifyKind(updated.ExpireTime.Value, DateTimeKind.Utc))
+                : null;
+            _logger.LogDebug("캐시 TTL 연장 완료 — name={CacheName} newExpiresAt={ExpiresAt}",
+                context.DynamicCacheRef, context.CacheExpiresAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "캐시 TTL 연장 실패 (무시) — name={CacheName}", context.DynamicCacheRef);
+        }
+
+        return new CacheHint(context.DynamicCacheRef!, context.CachedMessageCount);
     }
 
     /// <summary>velocity 조건 충족 여부. window 내 메시지 수가 VelocityMinMessages 이상이면 true.</summary>

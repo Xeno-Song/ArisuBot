@@ -45,15 +45,17 @@ public class GeminiCacheManagerTests
     // --- 헬퍼 ---
 
     private static ConversationContext MakeContext(
-        int uncachedTokens      = 0,
-        string? dynamicCacheRef = null,
-        int cachedMessageCount  = 0,
-        List<DateTimeOffset>? timestamps = null) => new()
+        int uncachedTokens          = 0,
+        string? dynamicCacheRef     = null,
+        int cachedMessageCount      = 0,
+        List<DateTimeOffset>? timestamps = null,
+        DateTimeOffset? cacheExpiresAt   = null) => new()
     {
         DynamicCacheRef         = dynamicCacheRef,
         CachedMessageCount      = cachedMessageCount,
         UncachedTokenCount      = uncachedTokens,
-        RecentMessageTimestamps = timestamps ?? []
+        RecentMessageTimestamps = timestamps ?? [],
+        CacheExpiresAt          = cacheExpiresAt
     };
 
     /// <summary>System 1개 + User/Assistant 교대 n회 + 새 User 메시지 1개로 구성된 메시지 목록.</summary>
@@ -129,14 +131,19 @@ public class GeminiCacheManagerTests
         var context = MakeContext(
             uncachedTokens:     RefreshThresholdTokens - 1,
             dynamicCacheRef:    "caches/existing",
-            cachedMessageCount: 4);
+            cachedMessageCount: 4,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(900));
+
+        _cacheMock.Setup(c => c.UpdateAsync("caches/existing", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CachedContent { Name = "caches/existing", ExpireTime = DateTime.UtcNow.AddSeconds(900) });
 
         var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
 
         Assert.NotNull(result);
         Assert.Equal("caches/existing", result!.CachedContentName);
         Assert.Equal(4, result.CachedMessageCount);
-        _cacheMock.VerifyNoOtherCalls();
+        _cacheMock.Verify(c => c.UpdateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================================
@@ -174,14 +181,19 @@ public class GeminiCacheManagerTests
         var context = MakeContext(
             uncachedTokens:     InitialThresholdTokens + 1, // InitialThreshold < this < RefreshThreshold
             dynamicCacheRef:    "caches/existing",
-            cachedMessageCount: 4);
+            cachedMessageCount: 4,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(900));
+
+        _cacheMock.Setup(c => c.UpdateAsync("caches/existing", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CachedContent { Name = "caches/existing", ExpireTime = DateTime.UtcNow.AddSeconds(900) });
 
         var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
 
         Assert.NotNull(result);
         Assert.Equal("caches/existing", result!.CachedContentName);
         Assert.Equal(4, result.CachedMessageCount);
-        _cacheMock.VerifyNoOtherCalls(); // rolling 없음
+        _cacheMock.Verify(c => c.UpdateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================================
@@ -239,7 +251,8 @@ public class GeminiCacheManagerTests
         var context = MakeContext(
             uncachedTokens:     RefreshThresholdTokens + 1,
             dynamicCacheRef:    "caches/old",
-            cachedMessageCount: 2);
+            cachedMessageCount: 2,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(900));
 
         _cacheMock.Setup(c => c.CreateAsync(
                 It.IsAny<string>(), It.IsAny<Content?>(),
@@ -267,7 +280,8 @@ public class GeminiCacheManagerTests
         var context = MakeContext(
             uncachedTokens:     RefreshThresholdTokens + 1,
             dynamicCacheRef:    "caches/old",
-            cachedMessageCount: 2);
+            cachedMessageCount: 2,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(900));
 
         _cacheMock.Setup(c => c.CreateAsync(
                 It.IsAny<string>(), It.IsAny<Content?>(),
@@ -311,7 +325,8 @@ public class GeminiCacheManagerTests
         var context = MakeContext(
             uncachedTokens:     RefreshThresholdTokens + 1,
             dynamicCacheRef:    "caches/old",
-            cachedMessageCount: 2);
+            cachedMessageCount: 2,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(900));
 
         _cacheMock.Setup(c => c.CreateAsync(
                 It.IsAny<string>(), It.IsAny<Content?>(),
@@ -324,6 +339,164 @@ public class GeminiCacheManagerTests
         Assert.NotNull(result);
         Assert.Equal("caches/old", result!.CachedContentName);
         Assert.Equal(2, result.CachedMessageCount);
+    }
+
+    // =========================================================================
+    // Timestamp pruning
+    // =========================================================================
+
+    // =========================================================================
+    // 캐시 만료 감지 및 TTL 연장
+    // =========================================================================
+
+    [Fact]
+    public async Task TryRollCacheAsync_ClearsRefAndCreatesNew_WhenCacheExpiresAtIsNull()
+    {
+        // CacheExpiresAt=null(기존 세션 재시작) → 만료로 간주 → ref 클리어 후 신규 생성 시도
+        var context = MakeContext(
+            uncachedTokens:     InitialThresholdTokens + 1,
+            dynamicCacheRef:    "caches/old",
+            cachedMessageCount: 4,
+            cacheExpiresAt:     null,
+            timestamps:         VelocityTimestamps());
+
+        _cacheMock.Setup(c => c.CreateAsync(
+                It.IsAny<string>(), It.IsAny<Content?>(),
+                It.IsAny<IEnumerable<Tool>?>(), It.IsAny<IEnumerable<Content>>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeCachedContent("caches/new"));
+
+        var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
+
+        Assert.NotNull(result);
+        Assert.Equal("caches/new", result!.CachedContentName);
+        // UpdateAsync 미호출 확인
+        _cacheMock.Verify(c => c.UpdateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // DynamicCacheRef 갱신
+        Assert.Equal("caches/new", context.DynamicCacheRef);
+    }
+
+    [Fact]
+    public async Task TryRollCacheAsync_ClearsRefAndCreatesNew_WhenCacheExpiresAtPast()
+    {
+        // CacheExpiresAt이 과거 → 만료 → ref 클리어 후 신규 생성
+        var context = MakeContext(
+            uncachedTokens:     InitialThresholdTokens + 1,
+            dynamicCacheRef:    "caches/old",
+            cachedMessageCount: 4,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(-60), // 이미 만료
+            timestamps:         VelocityTimestamps());
+
+        _cacheMock.Setup(c => c.CreateAsync(
+                It.IsAny<string>(), It.IsAny<Content?>(),
+                It.IsAny<IEnumerable<Tool>?>(), It.IsAny<IEnumerable<Content>>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeCachedContent("caches/new"));
+
+        var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
+
+        Assert.NotNull(result);
+        Assert.Equal("caches/new", result!.CachedContentName);
+        _cacheMock.Verify(c => c.UpdateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Null(context.CacheExpiresAt); // 신규 캐시 ExpireTime이 null인 mock이므로 null
+    }
+
+    [Fact]
+    public async Task TryRollCacheAsync_ExtendsExistingCacheTtl_WhenCacheValidAndRefreshThresholdNotMet()
+    {
+        // 유효 캐시 + refresh 임계값 미달 → UpdateAsync 호출, CreateAsync 미호출
+        var newExpiry = DateTime.UtcNow.AddSeconds(1800);
+        var context = MakeContext(
+            uncachedTokens:     RefreshThresholdTokens - 1,
+            dynamicCacheRef:    "caches/existing",
+            cachedMessageCount: 4,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(600));
+
+        _cacheMock.Setup(c => c.UpdateAsync("caches/existing", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CachedContent { Name = "caches/existing", ExpireTime = newExpiry });
+
+        var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
+
+        Assert.NotNull(result);
+        Assert.Equal("caches/existing", result!.CachedContentName);
+        Assert.Equal(4, result.CachedMessageCount);
+        // UpdateAsync 호출 확인
+        _cacheMock.Verify(c => c.UpdateAsync(
+            "caches/existing", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        // CreateAsync 미호출
+        _cacheMock.Verify(c => c.CreateAsync(
+            It.IsAny<string>(), It.IsAny<Content?>(),
+            It.IsAny<IEnumerable<Tool>?>(), It.IsAny<IEnumerable<Content>>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // CacheExpiresAt 갱신 — DateTime → DateTimeOffset 변환 후 비교
+        Assert.Equal(new DateTimeOffset(newExpiry, TimeSpan.Zero), context.CacheExpiresAt);
+    }
+
+    [Fact]
+    public async Task TryRollCacheAsync_ReturnsExistingHint_WhenUpdateFails()
+    {
+        // UpdateAsync 실패 → 경고 후 기존 hint 반환, 예외 미전파
+        var context = MakeContext(
+            uncachedTokens:     RefreshThresholdTokens - 1,
+            dynamicCacheRef:    "caches/existing",
+            cachedMessageCount: 4,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(600));
+
+        _cacheMock.Setup(c => c.UpdateAsync("caches/existing", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("network error"));
+
+        var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
+
+        Assert.NotNull(result);
+        Assert.Equal("caches/existing", result!.CachedContentName);
+        Assert.Equal(4, result.CachedMessageCount);
+    }
+
+    [Fact]
+    public async Task TryRollCacheAsync_SetsContextCacheExpiresAt_AfterCreateSuccess()
+    {
+        // 신규 캐시 생성 후 context.CacheExpiresAt = newCache.ExpireTime
+        var expiry  = DateTime.UtcNow.AddSeconds(1800);
+        var context = MakeContext(
+            uncachedTokens: InitialThresholdTokens + 1,
+            timestamps:     VelocityTimestamps());
+
+        _cacheMock.Setup(c => c.CreateAsync(
+                It.IsAny<string>(), It.IsAny<Content?>(),
+                It.IsAny<IEnumerable<Tool>?>(), It.IsAny<IEnumerable<Content>>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CachedContent { Name = "caches/new", ExpireTime = expiry });
+
+        await _sut.TryRollCacheAsync(context, MakeMessages(), null);
+
+        Assert.Equal(new DateTimeOffset(expiry, TimeSpan.Zero), context.CacheExpiresAt);
+    }
+
+    [Fact]
+    public async Task TryRollCacheAsync_DoesNotCallUpdate_WhenRolling()
+    {
+        // 유효 캐시 + RefreshThreshold 이상 → Rolling(신규 생성). UpdateAsync 미호출
+        var context = MakeContext(
+            uncachedTokens:     RefreshThresholdTokens + 1,
+            dynamicCacheRef:    "caches/old",
+            cachedMessageCount: 2,
+            cacheExpiresAt:     DateTimeOffset.UtcNow.AddSeconds(900));
+
+        _cacheMock.Setup(c => c.CreateAsync(
+                It.IsAny<string>(), It.IsAny<Content?>(),
+                It.IsAny<IEnumerable<Tool>?>(), It.IsAny<IEnumerable<Content>>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeCachedContent("caches/new"));
+        _cacheMock.Setup(c => c.DeleteAsync("caches/old", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var result = await _sut.TryRollCacheAsync(context, MakeMessages(), null);
+
+        Assert.Equal("caches/new", result!.CachedContentName);
+        _cacheMock.Verify(c => c.UpdateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // =========================================================================

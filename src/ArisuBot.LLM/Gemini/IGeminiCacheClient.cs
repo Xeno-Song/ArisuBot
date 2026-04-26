@@ -17,6 +17,9 @@ public interface IGeminiCacheClient
     /// <summary>명시적 캐시를 삭제한다. 존재하지 않는 캐시 삭제 시 예외를 전파한다.</summary>
     Task DeleteAsync(string cacheName, CancellationToken ct = default);
 
+    /// <summary>명시적 캐시의 TTL을 연장한다. 성공 시 갱신된 CachedContent(ExpireTime 포함)를 반환한다.</summary>
+    Task<CachedContent> UpdateAsync(string cacheName, string ttl, CancellationToken ct = default);
+
     /// <summary>현재 등록된 명시적 캐시 목록을 스트리밍 반환한다.</summary>
     IAsyncEnumerable<CachedContent> ListAsync(CancellationToken ct = default);
 }

@@ -31,6 +31,9 @@ public class ConversationContext
     /// <summary>마지막 LLM 응답의 총 토큰 수 (tokensIn + tokensOut). 재시작 후 UncachedTokenCount 복원 기준값으로 사용.</summary>
     public int LastTotalTokens { get; set; }
 
+    /// <summary>DynamicCacheRef의 만료 시각 (UTC). null이면 만료 시각 불명 — 만료로 간주한다.</summary>
+    public DateTimeOffset? CacheExpiresAt { get; set; }
+
     // --- Compaction 결과 저장 ---
 
     /// <summary>Compaction 실행으로 추출된 대화 요약. 새 세션 시작 시 Assistant 메시지로 주입.</summary>

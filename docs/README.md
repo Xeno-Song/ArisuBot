@@ -11,3 +11,4 @@
 | [54_EXPLICIT_CACHE_PLAN.md](54_EXPLICIT_CACHE_PLAN.md) | Explicit Cache 계획 | Gemini 명시적 캐싱 구현 계획. Phase 1(캐시 구현) + Phase 2(모니터링 사이드카) |
 | [60_COMPACTION_EXPERIMENT.md](60_COMPACTION_EXPERIMENT.md) | Compaction 실험 | LLM 기반 대화 압축 접근법 실험 및 결과 |
 | [61_COMPACTION_PLAN.md](61_COMPACTION_PLAN.md) | Compaction 정식 구현 | 트리거 3종, 새 session 생성, responseSchema, 슬래시 커맨드 |
+| [62_MESSAGE_COALESCING.md](62_MESSAGE_COALESCING.md) | Message Coalescing | LLM 처리 중 수신 메시지 수집 후 일괄 처리, Typing 유지 |

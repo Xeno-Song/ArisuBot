@@ -211,6 +211,40 @@ public class CompactionServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_NewSession_BatchMessageWithNullSenderName_IsNotProtected()
+    {
+        // SenderName=null이지만 index 2 이상의 배치 메시지 → protected 대상이 아님
+        var context = new ConversationContext
+        {
+            Id       = "ctx_batch",
+            TargetId = 1,
+            Type     = ArisuBot.Core.Models.ContextType.Channel,
+            Messages =
+            [
+                new ChatMessage { Role = Role.System,    Content = "sys" },
+                new ChatMessage { Role = Role.User,      Content = "persona",                    SenderName = null },
+                new ChatMessage { Role = Role.User,      Content = "[Alice]: hi\n[Bob]: hello",  SenderName = null }, // 배치 메시지
+                new ChatMessage { Role = Role.Assistant, Content = "response" }
+            ]
+        };
+
+        _promptMock.Setup(p => p.CompactionPrompt).Returns("COMPACT");
+        SetupLlm(ValidJson());
+
+        var newCtx = new ConversationContext { Id = "new_batch" };
+        _repoMock.Setup(r => r.CreateNewSessionAsync(It.IsAny<ulong>(), It.IsAny<ArisuBot.Core.Models.ContextType>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(newCtx);
+        _repoMock.Setup(r => r.SaveContextAsync(It.IsAny<ConversationContext>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var result = await CreateSut(recentCount: 20).RunAsync(context);
+
+        // protected(2) + synthetic(1) + recent(2) = 5 — 배치 메시지가 recent에 포함됨
+        Assert.Equal(5, result.Messages.Count);
+        Assert.Contains(result.Messages, m => m.Content.Contains("[Alice]: hi"));
+    }
+
+    [Fact]
     public async Task RunAsync_NewSession_RecentMessagesLimitedToCount()
     {
         // context에 비protected 메시지 10개 생성

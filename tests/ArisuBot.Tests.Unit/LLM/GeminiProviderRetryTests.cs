@@ -2,6 +2,7 @@ using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
 using ArisuBot.LLM.Monitoring;
+using ArisuBot.LLM.Services;
 using ArisuBot.LLM.Options;
 using Google.GenAI;
 using Google.GenAI.Types;
@@ -38,7 +39,8 @@ public class GeminiProviderRetryTests
             MaxToolIterations = 5
         });
         return new GeminiProvider(
-            _streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object, geminiOpts, llmOpts,
+            _streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object,
+            new ToolStateService(), geminiOpts, llmOpts,
             new Mock<ILogger<GeminiProvider>>().Object);
     }
 

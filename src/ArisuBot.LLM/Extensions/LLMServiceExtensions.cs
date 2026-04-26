@@ -1,6 +1,7 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.LLM.Gemini;
 using ArisuBot.LLM.Monitoring;
+using ArisuBot.LLM.Services;
 using ArisuBot.LLM.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,6 +40,9 @@ public static class LLMServiceExtensions
         services.AddSingleton<ILlmMonitorServer>(sp => sp.GetRequiredService<LlmTcpServer>());
         services.AddSingleton<IProcessingEventEmitter>(sp => sp.GetRequiredService<LlmTcpServer>());
         services.AddHostedService(sp => sp.GetRequiredService<LlmTcpServer>());
+
+        // Tool 상태 관리 — in-memory, 재시작 시 초기화
+        services.AddSingleton<IToolStateService, ToolStateService>();
 
         // GeminiProvider
         services.AddSingleton<ILLMProvider, GeminiProvider>();

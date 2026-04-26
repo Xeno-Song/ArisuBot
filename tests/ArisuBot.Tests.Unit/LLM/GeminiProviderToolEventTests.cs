@@ -1,3 +1,4 @@
+using ArisuBot.LLM.Services;
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
@@ -24,7 +25,8 @@ public class GeminiProviderToolEventTests
         var llmOpts    = Options.Create(new LLMOptions { MaxTokens = 100, Temperature = 0.5f, MaxToolIterations = 5 });
         return new GeminiProvider(
             _streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object,
-            geminiOpts, llmOpts, new Mock<ILogger<GeminiProvider>>().Object);
+            new ToolStateService(), geminiOpts, llmOpts,
+            new Mock<ILogger<GeminiProvider>>().Object);
     }
 
     private static async IAsyncEnumerable<GenerateContentResponse> ToAsyncEnumerable(

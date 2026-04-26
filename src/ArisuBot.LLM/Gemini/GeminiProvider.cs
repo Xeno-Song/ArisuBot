@@ -18,6 +18,7 @@ public class GeminiProvider : ILLMProvider
     private readonly IGeminiStreamClient _streamClient;
     private readonly ILlmMonitorServer _pipeServer;
     private readonly IErrorLogger _errorLogger;
+    private readonly IToolStateService _toolStateService;
     private readonly GeminiOptions _geminiOptions;
     private readonly LLMOptions _llmOptions;
     private readonly ILogger<GeminiProvider> _logger;
@@ -28,16 +29,18 @@ public class GeminiProvider : ILLMProvider
         IGeminiStreamClient streamClient,
         ILlmMonitorServer pipeServer,
         IErrorLogger errorLogger,
+        IToolStateService toolStateService,
         IOptions<GeminiOptions> geminiOptions,
         IOptions<LLMOptions> llmOptions,
         ILogger<GeminiProvider> logger)
     {
-        _streamClient   = streamClient;
-        _pipeServer     = pipeServer;
-        _errorLogger    = errorLogger;
-        _geminiOptions  = geminiOptions.Value;
-        _llmOptions     = llmOptions.Value;
-        _logger         = logger;
+        _streamClient     = streamClient;
+        _pipeServer       = pipeServer;
+        _errorLogger      = errorLogger;
+        _toolStateService = toolStateService;
+        _geminiOptions    = geminiOptions.Value;
+        _llmOptions       = llmOptions.Value;
+        _logger           = logger;
     }
 
     /// <summary>
@@ -338,6 +341,26 @@ public class GeminiProvider : ILLMProvider
                         ErrorMessage: unknownMsg,
                         DurationMs:   toolSw.ElapsedMilliseconds));
                     toolResult = ToolResult.Fail(unknownMsg);
+                }
+                else if (!_toolStateService.IsEnabled(fc.Name ?? string.Empty))
+                {
+                    // Dashboard에서 비활성화된 tool — execute 거부
+                    toolSw.Stop();
+                    var disabledMsg = $"툴 '{fc.Name}'이(가) 비활성화되어 있습니다.";
+                    _logger.LogInformation("비활성화된 툴 호출 거부 — tool={ToolName}", fc.Name);
+                    _ = _errorLogger.LogAsync(new ErrorLogEntry
+                    {
+                        ErrorType = ErrorType.ToolError,
+                        Source    = fc.Name ?? nameof(GeminiProvider),
+                        Message   = disabledMsg,
+                        ContextId = contextId
+                    });
+                    _pipeServer.Emit(new ToolCallFailedEvent(
+                        ContextId:    contextId,
+                        ToolName:     fc.Name ?? string.Empty,
+                        ErrorMessage: disabledMsg,
+                        DurationMs:   toolSw.ElapsedMilliseconds));
+                    toolResult = ToolResult.Fail(disabledMsg);
                 }
                 else
                 {

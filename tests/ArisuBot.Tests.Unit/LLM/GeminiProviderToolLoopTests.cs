@@ -3,6 +3,7 @@ using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
 using ArisuBot.LLM.Monitoring;
+using ArisuBot.LLM.Services;
 using ArisuBot.LLM.Options;
 using Google.GenAI.Types;
 using Microsoft.Extensions.Logging;
@@ -25,7 +26,8 @@ public class GeminiProviderToolLoopTests
         var geminiOpts = Options.Create(new GeminiOptions { Model = "test-model", ApiKey = "key" });
         var llmOpts = Options.Create(new LLMOptions { MaxTokens = 100, Temperature = 0.5f, MaxToolIterations = 5 });
         _sut = new GeminiProvider(_streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object,
-            geminiOpts, llmOpts, new Mock<ILogger<GeminiProvider>>().Object);
+            new ToolStateService(), geminiOpts, llmOpts,
+            new Mock<ILogger<GeminiProvider>>().Object);
     }
 
     private static async IAsyncEnumerable<GenerateContentResponse> ToAsyncEnumerable(
@@ -198,7 +200,8 @@ public class GeminiProviderToolLoopTests
         var llmOpts = Options.Create(new LLMOptions { MaxTokens = 100, Temperature = 0.5f, MaxToolIterations = 2 });
         var geminiOpts = Options.Create(new GeminiOptions { Model = "test-model", ApiKey = "key" });
         var sut = new GeminiProvider(_streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object,
-            geminiOpts, llmOpts, new Mock<ILogger<GeminiProvider>>().Object);
+            new ToolStateService(), geminiOpts, llmOpts,
+            new Mock<ILogger<GeminiProvider>>().Object);
 
         _toolMock.Setup(t => t.Name).Returns("loop_tool");
         _toolMock.Setup(t => t.Definition).Returns(new LLMToolDefinition { Name = "loop_tool", Description = "d", ParametersJsonSchema = "{}" });

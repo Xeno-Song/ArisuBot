@@ -165,22 +165,17 @@ public class CompactionService : ICompactionService
 
     /// <summary>
     /// new session 초기화:
-    /// [System] ← old session 원본 (캐시 prefix 보존)
-    /// [User, Persona] ← old session 원본 (캐시 prefix 보존)
+    /// [System] ← old session[0] 원본 (캐시 prefix 보존)
+    /// [User, Persona] ← old session[1] 원본 (캐시 prefix 보존)
     /// [Assistant, synthetic] ← compaction context 주입
-    /// [최근 N 메시지] ← old session에서 IsProtected 제외 후 TakeLast(N)
+    /// [최근 N 메시지] ← old session[2..] 에서 TakeLast(N)
     /// </summary>
     private async Task<ConversationContext> CreateNewSessionAsync(
         ConversationContext old, CompactionResult result, CancellationToken ct)
     {
-        // IsProtected: Role.System 또는 (Role.User && SenderName == null) → 항상 새 세션 선두에 복사
-        var protectedMessages = old.Messages
-            .Where(IsProtected)
-            .ToList();
-
-        var conversationMessages = old.Messages
-            .Where(m => !IsProtected(m))
-            .ToList();
+        // 처음 2개 메시지(System + Persona)는 항상 새 세션 선두에 복사
+        var protectedMessages    = old.Messages.Take(2).ToList();
+        var conversationMessages = old.Messages.Skip(2).ToList();
 
         var recentMessages = conversationMessages
             .TakeLast(_options.InjectionRecentMessageCount)
@@ -229,10 +224,6 @@ public class CompactionService : ICompactionService
 
         return sb.ToString().TrimEnd();
     }
-
-    /// <summary>IsProtected: 새 세션에서 압축 대상에서 제외하는 메시지 판별.</summary>
-    private static bool IsProtected(ChatMessage m)
-        => m.Role == Role.System || (m.Role == Role.User && m.SenderName is null);
 
     /// <summary>context.Messages에 추가 후 context 반환 (메서드 체인용).</summary>
     private static ConversationContext AppendMessage(ConversationContext context, ChatMessage message)

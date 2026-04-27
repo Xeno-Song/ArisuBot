@@ -37,7 +37,7 @@ else
                     <td><code class="small">@s.Id[..Math.Min(12, s.Id.Length)]</code></td>
                     <td>@s.Type</td>
                     <td>@s.TargetId</td>
-                    <td>@s.Messages.Count</td>
+                    <td>@(s.MessageCount ?? 0)</td>
                     <td>@tokIn.ToString("N0")</td>
                     <td>@tokOut.ToString("N0")</td>
                     <td class="small">@s.CreatedAt.ToLocalTime().ToString("MM-dd HH:mm")</td>

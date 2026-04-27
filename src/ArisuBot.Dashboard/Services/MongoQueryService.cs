@@ -1,5 +1,6 @@
 using ArisuBot.Infrastructure.MongoDB;
 using ArisuBot.Infrastructure.MongoDB.Documents;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace ArisuBot.Dashboard.Services;
@@ -48,17 +49,18 @@ public class MongoQueryService : IMongoQueryService
             .ToListAsync(ct);
     }
 
-    /// <summary>모든 세션 요약 반환 (최신 순). Messages는 제외해 페이로드 최소화.</summary>
+    /// <summary>모든 세션 요약 반환 (최신 순). Messages 배열 제외 + 카운트만 집계해 페이로드 최소화.</summary>
     public async Task<List<ConversationDocument>> GetAllSessionsAsync(int limit = 200, CancellationToken ct = default)
     {
         var collection = _db.GetCollection<ConversationDocument>("conversation_contexts");
-        // Messages 필드 제외 — 토큰 정보만 필요
-        var projection = Builders<ConversationDocument>.Projection
-            .Exclude(d => d.Messages);
-        return await collection
-            .Find(FilterDefinition<ConversationDocument>.Empty)
-            .Project<ConversationDocument>(projection)
-            .Sort(Builders<ConversationDocument>.Sort.Descending(d => d.UpdatedAt))
+        return await collection.Aggregate()
+            // $addFields: messageCount = messages 배열 크기 ($size)
+            .AppendStage<ConversationDocument>(new BsonDocument("$addFields",
+                new BsonDocument("messageCount", new BsonDocument("$size", "$messages"))))
+            // $project: messages 배열 제외 (페이로드 축소)
+            .AppendStage<ConversationDocument>(new BsonDocument("$project",
+                new BsonDocument("messages", 0)))
+            .SortByDescending(d => d.UpdatedAt)
             .Limit(limit)
             .ToListAsync(ct);
     }

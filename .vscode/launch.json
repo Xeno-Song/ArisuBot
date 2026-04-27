@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "ArisuBot (Debug)",
+      "name": "ArisuBot.Host (Debug)",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build-host",
@@ -12,6 +12,34 @@
       "stopAtEntry": false,
       "console": "integratedTerminal",
       "env": {}
+    },
+    {
+      "name": "ArisuBot.Dashboard (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-dashboard",
+      "program": "${workspaceFolder}/src/ArisuBot.Dashboard/bin/Debug/net8.0/ArisuBot.Dashboard.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/ArisuBot.Dashboard/bin/Debug/net8.0",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "ArisuBot (Host + Dashboard)",
+      "configurations": [
+        "ArisuBot.Host (Debug)",
+        "ArisuBot.Dashboard (Debug)"
+      ],
+      "stopAll": true
     }
   ]
 }

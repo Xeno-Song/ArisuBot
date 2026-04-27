@@ -6,6 +6,12 @@
       "runtimeExecutable": "dotnet",
       "runtimeArgs": ["run", "--project", "src/ArisuBot.Host/ArisuBot.Host.csproj"],
       "port": 0
+    },
+    {
+      "name": "ArisuBot.Dashboard",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/ArisuBot.Dashboard/ArisuBot.Dashboard.csproj"],
+      "port": 5000
     }
   ]
 }

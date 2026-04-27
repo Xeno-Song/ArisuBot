@@ -51,7 +51,7 @@ public class MongoQueryService : IMongoQueryService
     /// <summary>모든 세션 요약 반환 (최신 순). Messages는 제외해 페이로드 최소화.</summary>
     public async Task<List<ConversationDocument>> GetAllSessionsAsync(int limit = 200, CancellationToken ct = default)
     {
-        var collection = _db.GetCollection<ConversationDocument>("conversations");
+        var collection = _db.GetCollection<ConversationDocument>("conversation_contexts");
         // Messages 필드 제외 — 토큰 정보만 필요
         var projection = Builders<ConversationDocument>.Projection
             .Exclude(d => d.Messages);
@@ -67,7 +67,7 @@ public class MongoQueryService : IMongoQueryService
     public async Task<TokenAggregate?> GetSessionTokenAggregateAsync(
         string sessionId, CancellationToken ct = default)
     {
-        var collection = _db.GetCollection<ConversationDocument>("conversations");
+        var collection = _db.GetCollection<ConversationDocument>("conversation_contexts");
         var filter = Builders<ConversationDocument>.Filter.Eq(d => d.Id, sessionId);
         var doc = await collection.Find(filter).FirstOrDefaultAsync(ct);
         if (doc is null) return null;

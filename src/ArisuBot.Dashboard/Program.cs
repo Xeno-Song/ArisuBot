@@ -6,6 +6,9 @@ using Microsoft.Extensions.Options;
 // Dashboard 진입점. Blazor Server + TCP 이벤트 수신 + MongoDB 쿼리.
 var builder = WebApplication.CreateBuilder(args);
 
+// 로컬 전용 설정 오버라이드 (gitignore 대상, 커밋 금지)
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: false);
+
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 

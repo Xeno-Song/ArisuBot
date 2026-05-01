@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using ArisuBot.Core.Interfaces;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -10,11 +11,12 @@ using Microsoft.Extensions.Options;
 namespace ArisuBot.LLM.Monitoring;
 
 /// <summary>
-/// TCP 서버로 LLM Monitor Sidecar에 이벤트를 스트리밍 전송한다.
+/// TCP 서버로 LLM Monitor / Dashboard Sidecar에 이벤트를 스트리밍 전송한다.
 /// IHostedService로 TCP 수신 루프를 관리하며, Sidecar 미연결 시 이벤트는 drop된다.
 /// 클라이언트 연결 끊김 시 새 연결 대기로 자동 복귀한다.
+/// IProcessingEventEmitter: MessageHandler의 처리 시작/완료 이벤트를 수신해 TCP 스트림으로 전달.
 /// </summary>
-public sealed class LlmTcpServer : ILlmMonitorServer, IHostedService
+public sealed class LlmTcpServer : ILlmMonitorServer, IProcessingEventEmitter, IHostedService
 {
     private readonly MonitorServerOptions _options;
     private readonly ILogger<LlmTcpServer> _logger;
@@ -50,6 +52,14 @@ public sealed class LlmTcpServer : ILlmMonitorServer, IHostedService
         // TryWrite: 채널 용량 초과 시 false(drop). 채널 완료 후에도 false. 예외 없음.
         _channel.Writer.TryWrite(json);
     }
+
+    /// <inheritdoc/>
+    public void EmitProcessingStarted(string contextId, int messageCount)
+        => Emit(new ProcessingStartedEvent(ContextId: contextId, MessageCount: messageCount));
+
+    /// <inheritdoc/>
+    public void EmitProcessingCompleted(string contextId, long durationMs)
+        => Emit(new ProcessingCompletedEvent(ContextId: contextId, DurationMs: durationMs));
 
     public Task StartAsync(CancellationToken cancellationToken)
     {

@@ -6,9 +6,9 @@ obj/
 .vs/
 *.userprefs
 
-## Secret config — 절대 커밋 금지
-appsettings.Local.json
-**/appsettings.Local.json
+## Secret/local config — 절대 커밋 금지 (appsettings.json, appsettings.Development.json 제외)
+appsettings.*.json
+**/appsettings.*.json
 
 ## Logs
 logs/

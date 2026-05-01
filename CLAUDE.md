@@ -22,7 +22,7 @@
 6. You CANNOT decide or estimate any functional specification or work. You MUST request question to user to decide ambiguous things.
 
 # Security Rule
-1. You MUST NOT read secret or local configuration files: `appsettings.Local.json`, `appsettings.Secret.json`, `.env`, or any file containing credentials, tokens, or API keys. These files contain sensitive information and must never be read or exposed.
+1. You MUST NOT read secret or local configuration files: `appsettings.*.json` (e.g. `appsettings.Local.json`, `appsettings.Production.json`, `appsettings.Secret.json`), `.env`, or any file containing credentials, tokens, or API keys. These files contain sensitive information and must never be read or exposed.
 2. To diagnose configuration issues, read only the non-secret config files (e.g. `appsettings.json`) and the relevant Options class comments.
 
 # Code Style

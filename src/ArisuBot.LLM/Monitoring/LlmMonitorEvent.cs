@@ -2,13 +2,18 @@ using System.Text.Json.Serialization;
 
 namespace ArisuBot.LLM.Monitoring;
 
-/// <summary>Named Pipe로 LLM Monitor Sidecar에 전송하는 이벤트 기반 클래스.</summary>
+/// <summary>TCP 스트림으로 Monitor/Dashboard Sidecar에 전송하는 이벤트 기반 클래스.</summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
-[JsonDerivedType(typeof(CacheCreatedEvent),  "CACHE_CREATED")]
-[JsonDerivedType(typeof(CacheDeletedEvent),  "CACHE_DELETED")]
-[JsonDerivedType(typeof(CacheExtendedEvent), "CACHE_EXTENDED")]
-[JsonDerivedType(typeof(TokenUsageEvent),    "TOKEN_USAGE")]
-[JsonDerivedType(typeof(ModelStatusEvent),   "MODEL_STATUS")]
+[JsonDerivedType(typeof(CacheCreatedEvent),         "CACHE_CREATED")]
+[JsonDerivedType(typeof(CacheDeletedEvent),         "CACHE_DELETED")]
+[JsonDerivedType(typeof(CacheExtendedEvent),        "CACHE_EXTENDED")]
+[JsonDerivedType(typeof(TokenUsageEvent),           "TOKEN_USAGE")]
+[JsonDerivedType(typeof(ModelStatusEvent),          "MODEL_STATUS")]
+[JsonDerivedType(typeof(ProcessingStartedEvent),    "PROCESSING_STARTED")]
+[JsonDerivedType(typeof(ProcessingCompletedEvent),  "PROCESSING_COMPLETED")]
+[JsonDerivedType(typeof(ToolCallStartedEvent),      "TOOL_CALL_STARTED")]
+[JsonDerivedType(typeof(ToolCallCompletedEvent),    "TOOL_CALL_COMPLETED")]
+[JsonDerivedType(typeof(ToolCallFailedEvent),       "TOOL_CALL_FAILED")]
 public abstract record LlmMonitorEvent(DateTimeOffset Timestamp);
 
 /// <summary>Gemini 명시적 캐시 생성 시 발행.</summary>
@@ -44,4 +49,38 @@ public sealed record TokenUsageEvent(
 public sealed record ModelStatusEvent(
     string CurrentModel,
     string PreviousModel)
+    : LlmMonitorEvent(DateTimeOffset.UtcNow);
+
+/// <summary>Discord 메시지 처리 시작 시 발행.</summary>
+public sealed record ProcessingStartedEvent(
+    string ContextId,
+    int MessageCount)
+    : LlmMonitorEvent(DateTimeOffset.UtcNow);
+
+/// <summary>Discord 메시지 처리 완료 시 발행.</summary>
+public sealed record ProcessingCompletedEvent(
+    string ContextId,
+    long DurationMs)
+    : LlmMonitorEvent(DateTimeOffset.UtcNow);
+
+/// <summary>LLM tool 호출 직전 발행.</summary>
+public sealed record ToolCallStartedEvent(
+    string? ContextId,
+    string ToolName,
+    string ArgumentsJson)
+    : LlmMonitorEvent(DateTimeOffset.UtcNow);
+
+/// <summary>LLM tool 호출 성공 완료 시 발행.</summary>
+public sealed record ToolCallCompletedEvent(
+    string? ContextId,
+    string ToolName,
+    long DurationMs)
+    : LlmMonitorEvent(DateTimeOffset.UtcNow);
+
+/// <summary>LLM tool 호출 실패 시 발행. 알 수 없는 tool, disabled tool, 실행 예외 모두 포함.</summary>
+public sealed record ToolCallFailedEvent(
+    string? ContextId,
+    string ToolName,
+    string ErrorMessage,
+    long DurationMs)
     : LlmMonitorEvent(DateTimeOffset.UtcNow);

@@ -1,0 +1,154 @@
+@page "/tokens"
+@implements IDisposable
+@inject DashboardStateService State
+@inject TokenSyncService SyncService
+
+<PageTitle>토큰 집계 — ArisuBot</PageTitle>
+
+<div class="d-flex align-items-center mb-3 gap-2">
+    <h4 class="mb-0">토큰 집계</h4>
+    <button class="btn btn-sm btn-outline-primary" @onclick="SyncAsync" disabled="@_syncing">
+        @if (_syncing)
+        {
+            <span>동기화 중...</span>
+        }
+        else
+        {
+            <span>DB 동기화</span>
+        }
+    </button>
+    @if (State.Baseline.IsLoaded)
+    {
+        <span class="text-muted small">마지막 동기화: @State.Baseline.SyncedAt!.Value.ToLocalTime().ToString("HH:mm:ss")</span>
+    }
+    else
+    {
+        <span class="text-muted small">동기화 대기 중...</span>
+    }
+</div>
+
+<div class="row g-3">
+    <!-- DB 기준 누적 -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between">
+                <span>DB 누적 (마지막 동기화 기준)</span>
+                @if (!State.Baseline.IsLoaded)
+                {
+                    <span class="badge bg-secondary">미동기화</span>
+                }
+            </div>
+            <div class="card-body">
+                @if (!State.Baseline.IsLoaded)
+                {
+                    <p class="text-muted mb-0">동기화 전입니다.</p>
+                }
+                else
+                {
+                    var b = State.Baseline;
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                            <tr><td>입력 토큰</td><td class="text-end fw-bold">@b.TotalIn.ToString("N0")</td></tr>
+                            <tr><td>출력 토큰</td><td class="text-end fw-bold">@b.TotalOut.ToString("N0")</td></tr>
+                            <tr><td>캐시 적중</td><td class="text-end">@b.TotalCached.ToString("N0")</td></tr>
+                            <tr class="table-light"><td>합계 (In+Out)</td><td class="text-end fw-bold">@((b.TotalIn + b.TotalOut).ToString("N0"))</td></tr>
+                            <tr><td>LLM 요청 수</td><td class="text-end">@b.RecordCount.ToString("N0")</td></tr>
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- 동기화 이후 실시간 delta -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header">동기화 이후 실시간 증분</div>
+            <div class="card-body">
+                @{
+                    var (dIn, dOut, dCached, dReq) = State.DeltaTotal;
+                }
+                @if (dReq == 0)
+                {
+                    <p class="text-muted mb-0">동기화 이후 토큰 사용 없음</p>
+                }
+                else
+                {
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                            <tr><td>입력 토큰</td><td class="text-end fw-bold">@dIn.ToString("N0")</td></tr>
+                            <tr><td>출력 토큰</td><td class="text-end fw-bold">@dOut.ToString("N0")</td></tr>
+                            <tr><td>캐시 적중</td><td class="text-end">@dCached.ToString("N0")</td></tr>
+                            <tr class="table-light"><td>합계 (In+Out)</td><td class="text-end fw-bold">@((dIn + dOut).ToString("N0"))</td></tr>
+                            <tr><td>LLM 요청 수</td><td class="text-end">@dReq.ToString("N0")</td></tr>
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 동기화 이후 컨텍스트별 delta 상세 -->
+@if (State.TokenDelta.Any())
+{
+    <div class="card mt-3">
+        <div class="card-header">동기화 이후 컨텍스트별 실시간 증분</div>
+        <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+                <thead>
+                    <tr>
+                        <th>컨텍스트</th>
+                        <th class="text-end">In</th>
+                        <th class="text-end">Out</th>
+                        <th class="text-end">Cached</th>
+                        <th class="text-end">합계</th>
+                        <th class="text-end">요청</th>
+                        <th>최종 활동</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in State.TokenDelta)
+                    {
+                        <tr>
+                            <td><code class="small">@Short(s.ContextId)</code></td>
+                            <td class="text-end">@s.TotalIn.ToString("N0")</td>
+                            <td class="text-end">@s.TotalOut.ToString("N0")</td>
+                            <td class="text-end">@s.TotalCached.ToString("N0")</td>
+                            <td class="text-end fw-bold">@((s.TotalIn + s.TotalOut).ToString("N0"))</td>
+                            <td class="text-end">@s.RequestCount</td>
+                            <td class="small">@s.LastActivity.ToLocalTime().ToString("HH:mm:ss")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _syncing;
+
+    private static string Short(string id) =>
+        id.Length > 16 ? id[..16] + "…" : id;
+
+    protected override void OnInitialized()
+        => State.OnChange += HandleStateChange;
+
+    public void Dispose()
+        => State.OnChange -= HandleStateChange;
+
+    private void HandleStateChange()
+        => InvokeAsync(StateHasChanged);
+
+    private async Task SyncAsync()
+    {
+        _syncing = true;
+        StateHasChanged();
+        await SyncService.SyncNowAsync();
+        // SyncNowAsync는 트리거만 보냄 — 완료는 DashboardStateService.OnChange로 알림
+        // 버튼 상태는 짧게 유지 후 해제 (UX 피드백)
+        await Task.Delay(500);
+        _syncing = false;
+    }
+}

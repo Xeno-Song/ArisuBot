@@ -83,6 +83,13 @@ public class ConversationDocument
     [BsonIgnoreIfNull]
     public DateTime? LastCompactedAt { get; set; }
 
+    // --- Dashboard 집계 전용 필드 (DB 저장 안 됨, $addFields 집계 결과 수신) ---
+
+    /// <summary>메시지 수. DB에 저장되지 않으며 GetAllSessionsAsync 집계 시에만 채워진다.</summary>
+    [BsonElement("messageCount")]
+    [BsonIgnoreIfNull]
+    public int? MessageCount { get; set; }
+
     /// <summary>도메인 모델로 변환.</summary>
     public ConversationContext ToDomain() => new()
     {

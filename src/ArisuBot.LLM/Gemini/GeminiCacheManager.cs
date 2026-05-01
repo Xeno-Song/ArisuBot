@@ -17,6 +17,7 @@ public class GeminiCacheManager : ILLMCacheManager
 {
     private readonly IGeminiCacheClient _cacheClient;
     private readonly ILlmMonitorServer _pipeServer;
+    private readonly IErrorLogger _errorLogger;
     private readonly CacheOptions _cacheOptions;
     private readonly GeminiOptions _geminiOptions;
     private readonly ILogger<GeminiCacheManager> _logger;
@@ -27,12 +28,14 @@ public class GeminiCacheManager : ILLMCacheManager
     public GeminiCacheManager(
         IGeminiCacheClient cacheClient,
         ILlmMonitorServer pipeServer,
+        IErrorLogger errorLogger,
         IOptions<CacheOptions> cacheOptions,
         IOptions<GeminiOptions> geminiOptions,
         ILogger<GeminiCacheManager> logger)
     {
         _cacheClient   = cacheClient;
         _pipeServer    = pipeServer;
+        _errorLogger   = errorLogger;
         _cacheOptions  = cacheOptions.Value;
         _geminiOptions = geminiOptions.Value;
         _logger        = logger;
@@ -159,6 +162,14 @@ public class GeminiCacheManager : ILLMCacheManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "캐시 생성 실패 — 이번 요청은 기존 캐시(있으면) 사용 또는 no-cache로 진행");
+            _ = _errorLogger.LogAsync(new ErrorLogEntry
+            {
+                ErrorType = ErrorType.CacheError,
+                Source    = nameof(GeminiCacheManager),
+                Message   = ex.Message,
+                Details   = ex.ToString(),
+                ContextId = context.Id
+            });
             // 기존 캐시 있으면 재사용, 없으면 no cache
             return string.IsNullOrEmpty(context.DynamicCacheRef)
                 ? null

@@ -2,6 +2,7 @@ using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
 using ArisuBot.LLM.Monitoring;
+using ArisuBot.LLM.Services;
 using ArisuBot.LLM.Options;
 using Google.GenAI;
 using Google.GenAI.Types;
@@ -15,6 +16,7 @@ public class GeminiProviderRetryTests
 {
     private readonly Mock<IGeminiStreamClient> _streamMock = new();
     private readonly Mock<ILlmMonitorServer> _pipeMock = new();
+    private readonly Mock<IErrorLogger> _errorLoggerMock = new();
 
     /// <summary>지정한 설정으로 GeminiProvider 인스턴스 생성.</summary>
     private GeminiProvider CreateSut(
@@ -37,7 +39,8 @@ public class GeminiProviderRetryTests
             MaxToolIterations = 5
         });
         return new GeminiProvider(
-            _streamMock.Object, _pipeMock.Object, geminiOpts, llmOpts,
+            _streamMock.Object, _pipeMock.Object, _errorLoggerMock.Object,
+            new ToolStateService(), geminiOpts, llmOpts,
             new Mock<ILogger<GeminiProvider>>().Object);
     }
 

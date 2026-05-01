@@ -17,6 +17,8 @@ public class GeminiProvider : ILLMProvider
 {
     private readonly IGeminiStreamClient _streamClient;
     private readonly ILlmMonitorServer _pipeServer;
+    private readonly IErrorLogger _errorLogger;
+    private readonly IToolStateService _toolStateService;
     private readonly GeminiOptions _geminiOptions;
     private readonly LLMOptions _llmOptions;
     private readonly ILogger<GeminiProvider> _logger;
@@ -26,15 +28,19 @@ public class GeminiProvider : ILLMProvider
     public GeminiProvider(
         IGeminiStreamClient streamClient,
         ILlmMonitorServer pipeServer,
+        IErrorLogger errorLogger,
+        IToolStateService toolStateService,
         IOptions<GeminiOptions> geminiOptions,
         IOptions<LLMOptions> llmOptions,
         ILogger<GeminiProvider> logger)
     {
-        _streamClient   = streamClient;
-        _pipeServer     = pipeServer;
-        _geminiOptions  = geminiOptions.Value;
-        _llmOptions     = llmOptions.Value;
-        _logger         = logger;
+        _streamClient     = streamClient;
+        _pipeServer       = pipeServer;
+        _errorLogger      = errorLogger;
+        _toolStateService = toolStateService;
+        _geminiOptions    = geminiOptions.Value;
+        _llmOptions       = llmOptions.Value;
+        _logger           = logger;
     }
 
     /// <summary>
@@ -164,6 +170,14 @@ public class GeminiProvider : ILLMProvider
                 {
                     // 4xx ClientError — 재시도 없이 즉시 실패. 상세 원인은 exception 메시지에서 확인
                     _logger.LogError(ex, "Gemini ClientError — model={Model} iteration={Iteration}", currentModel, iteration);
+                    _ = _errorLogger.LogAsync(new ErrorLogEntry
+                    {
+                        ErrorType = ErrorType.LLMError,
+                        Source    = nameof(GeminiProvider),
+                        Message   = ex.Message,
+                        Details   = ex.ToString(),
+                        ContextId = contextId
+                    });
                     throw;
                 }
                 catch (ServerError ex)
@@ -181,7 +195,18 @@ public class GeminiProvider : ILLMProvider
 
                     // 재시도 소진 — fallback 전환 시도
                     if (_geminiOptions.FallbackModel is null || currentModel == _geminiOptions.FallbackModel)
-                        throw; // fallback 없거나 이미 fallback 중이면 최종 실패
+                    {
+                        // fallback 없거나 이미 fallback 중이면 최종 실패
+                        _ = _errorLogger.LogAsync(new ErrorLogEntry
+                        {
+                            ErrorType = ErrorType.LLMError,
+                            Source    = nameof(GeminiProvider),
+                            Message   = ex.Message,
+                            Details   = ex.ToString(),
+                            ContextId = contextId
+                        });
+                        throw;
+                    }
 
                     _logger.LogWarning(ex,
                         "Fallback 모델 전환 — from={Primary} to={Fallback}",
@@ -286,7 +311,9 @@ public class GeminiProvider : ILLMProvider
                 if (tool is null)
                     _logger.LogWarning("알 수 없는 툴 이름 — toolName={ToolName}", fc.Name);
 
-                var args = fc.Args ?? new Dictionary<string, object>();
+                var args        = fc.Args ?? new Dictionary<string, object>();
+                var argsJson    = JsonSerializer.Serialize(args);
+                var toolSw      = System.Diagnostics.Stopwatch.StartNew();
 
                 // ToolCall 이력 기록 — 첫 호출에만 thought metadata 첨부 (한 iteration 당 1회)
                 toolCallHistory.Add(new ChatMessage
@@ -294,20 +321,57 @@ public class GeminiProvider : ILLMProvider
                     Role                 = Role.ToolCall,
                     CallId               = callId,
                     ToolName             = fc.Name,
-                    ToolArgsJson         = JsonSerializer.Serialize(args),
+                    ToolArgsJson         = argsJson,
                     ProviderMetadataJson = fcIndex == 0 ? providerMetadataJson : null
                 });
+
+                _pipeServer.Emit(new ToolCallStartedEvent(
+                    ContextId:    contextId,
+                    ToolName:     fc.Name ?? string.Empty,
+                    ArgumentsJson: argsJson));
 
                 ToolResult toolResult;
                 if (tool is null)
                 {
-                    toolResult = ToolResult.Fail($"알 수 없는 툴 '{fc.Name}'");
+                    toolSw.Stop();
+                    var unknownMsg = $"알 수 없는 툴 '{fc.Name}'";
+                    _pipeServer.Emit(new ToolCallFailedEvent(
+                        ContextId:    contextId,
+                        ToolName:     fc.Name ?? string.Empty,
+                        ErrorMessage: unknownMsg,
+                        DurationMs:   toolSw.ElapsedMilliseconds));
+                    toolResult = ToolResult.Fail(unknownMsg);
+                }
+                else if (!_toolStateService.IsEnabled(fc.Name ?? string.Empty))
+                {
+                    // Dashboard에서 비활성화된 tool — execute 거부
+                    toolSw.Stop();
+                    var disabledMsg = $"툴 '{fc.Name}'이(가) 비활성화되어 있습니다.";
+                    _logger.LogInformation("비활성화된 툴 호출 거부 — tool={ToolName}", fc.Name);
+                    _ = _errorLogger.LogAsync(new ErrorLogEntry
+                    {
+                        ErrorType = ErrorType.ToolError,
+                        Source    = fc.Name ?? nameof(GeminiProvider),
+                        Message   = disabledMsg,
+                        ContextId = contextId
+                    });
+                    _pipeServer.Emit(new ToolCallFailedEvent(
+                        ContextId:    contextId,
+                        ToolName:     fc.Name ?? string.Empty,
+                        ErrorMessage: disabledMsg,
+                        DurationMs:   toolSw.ElapsedMilliseconds));
+                    toolResult = ToolResult.Fail(disabledMsg);
                 }
                 else
                 {
                     try
                     {
                         toolResult = await tool.ExecuteAsync(args, toolContext!, ct);
+                        toolSw.Stop();
+                        _pipeServer.Emit(new ToolCallCompletedEvent(
+                            ContextId:  contextId,
+                            ToolName:   fc.Name ?? string.Empty,
+                            DurationMs: toolSw.ElapsedMilliseconds));
                     }
                     catch (OperationCanceledException)
                     {
@@ -315,8 +379,22 @@ public class GeminiProvider : ILLMProvider
                     }
                     catch (Exception ex)
                     {
+                        toolSw.Stop();
                         // 예측 불가능한 런타임 예외 — LLM iteration 유지를 위해 ToolResult.Fail로 변환
                         _logger.LogError(ex, "툴 실행 예외 — callId={CallId} tool={ToolName}", callId, fc.Name);
+                        _ = _errorLogger.LogAsync(new ErrorLogEntry
+                        {
+                            ErrorType = ErrorType.ToolError,
+                            Source    = fc.Name ?? nameof(GeminiProvider),
+                            Message   = ex.Message,
+                            Details   = ex.ToString(),
+                            ContextId = contextId
+                        });
+                        _pipeServer.Emit(new ToolCallFailedEvent(
+                            ContextId:    contextId,
+                            ToolName:     fc.Name ?? string.Empty,
+                            ErrorMessage: ex.Message,
+                            DurationMs:   toolSw.ElapsedMilliseconds));
                         toolResult = ToolResult.Fail(ex.Message);
                     }
                 }

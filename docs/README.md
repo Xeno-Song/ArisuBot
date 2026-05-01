@@ -12,3 +12,4 @@
 | [60_COMPACTION_EXPERIMENT.md](60_COMPACTION_EXPERIMENT.md) | Compaction 실험 | LLM 기반 대화 압축 접근법 실험 및 결과 |
 | [61_COMPACTION_PLAN.md](61_COMPACTION_PLAN.md) | Compaction 정식 구현 | 트리거 3종, 새 session 생성, responseSchema, 슬래시 커맨드 |
 | [62_MESSAGE_COALESCING.md](62_MESSAGE_COALESCING.md) | Message Coalescing | LLM 처리 중 수신 메시지 수집 후 일괄 처리, Typing 유지 |
+| [63_DASHBOARD_PLAN.md](63_DASHBOARD_PLAN.md) | Dashboard 구현 계획 | Blazor Server 기반 독립 모니터링 Dashboard (Tool 제어, 에러 로그, 세션/토큰 조회) |

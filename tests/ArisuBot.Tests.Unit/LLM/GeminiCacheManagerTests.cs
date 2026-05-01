@@ -1,3 +1,4 @@
+using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.LLM.Gemini;
 using ArisuBot.LLM.Monitoring;
@@ -13,6 +14,7 @@ public class GeminiCacheManagerTests
 {
     private readonly Mock<IGeminiCacheClient> _cacheMock = new();
     private readonly Mock<ILlmMonitorServer> _pipeMock = new();
+    private readonly Mock<IErrorLogger> _errorLoggerMock = new();
     private readonly GeminiCacheManager _sut;
 
     // 테스트 기준값 — 실제 appsettings 독립적으로 제어
@@ -37,6 +39,7 @@ public class GeminiCacheManagerTests
         _sut = new GeminiCacheManager(
             _cacheMock.Object,
             _pipeMock.Object,
+            _errorLoggerMock.Object,
             cacheOpts,
             geminiOpts,
             new Mock<ILogger<GeminiCacheManager>>().Object);
@@ -95,6 +98,7 @@ public class GeminiCacheManagerTests
         var sut = new GeminiCacheManager(
             _cacheMock.Object,
             new Mock<ILlmMonitorServer>().Object,
+            new Mock<IErrorLogger>().Object,
             Options.Create(new CacheOptions { Enabled = false }),
             Options.Create(new GeminiOptions { Model = "m", ApiKey = "k" }),
             new Mock<ILogger<GeminiCacheManager>>().Object);

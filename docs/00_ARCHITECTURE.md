@@ -237,10 +237,11 @@ services.AddSingleton<ILLMProvider>(sp =>
 
 ## MongoDB Collections
 
-| Collection | 용도 |
-|-----------|------|
-| `conversation_contexts` | 유저/채널별 대화 히스토리 |
-| `ai_message_logs` | 전체 AI 메시지 감사 로그 |
+| Collection | 용도 | 사용 위치 |
+|-----------|------|----------|
+| `conversation_contexts` | 유저/채널별 대화 히스토리 + 토큰 사용량 | `ConversationRepository`, `MongoQueryService` |
+| `ai_message_logs` | 전체 AI 메시지 감사 로그 | `AIMessageLogger` |
+| `error_logs` | LLM/Tool 에러 로그 | `ErrorLogger`, `MongoQueryService` |
 
 ### `conversation_contexts` Document
 

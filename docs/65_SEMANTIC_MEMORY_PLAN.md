@@ -2,7 +2,7 @@
 
 ## 개요
 
-유저별 장기 기억(semantic memory)을 MongoDB에 저장하고, 세션 내 첫 메시지 시 해당 유저의 기억을 LLM 컨텍스트에 주입하는 기능.
+유저별 장기 기억(semantic memory)을 MongoDB에 session 단위로 저장하고, 이후 세션의 첫 메시지 시 해당 유저의 최신 기억을 LLM 컨텍스트에 주입하는 기능.
 
 Compaction과 완전히 분리된 독립 서비스로 구성한다.
 
@@ -14,67 +14,75 @@ Compaction과 완전히 분리된 독립 서비스로 구성한다.
 |------|------|------|
 | Compaction 연동 방식 | 호출 측(CompactionBackgroundService, MessageHandler)에서 compaction 완료 후 별도 호출 | Compaction과 Semantic Memory는 관심사 분리 |
 | 저장소 | MongoDB `semantic_memory` 컬렉션 | **Phase 2에서 Qdrant 마이그레이션 예정** |
+| 저장 단위 | **session별 document 신규 생성** (per-user 갱신 아님) | 히스토리 보존, rollback 가능 |
 | 추출 입력 | `context.Messages` 전체 (System + Persona 포함) | Gemini explicit cache hit 활용 |
-| Fact 구조 | Flat `List<SemanticMemoryFact>` + `Type` 필드 | Qdrant 마이그레이션 시 fact 단위 vector 변환 용이 |
-| 추출 타입 | `trait` (성향) / `event` (이벤트) / `episode` (에피소드) 3종 분리 | 목적별 검색 및 주입 제어를 위함 |
-| 압축 threshold | Type별 별도 임계값 (`appsettings.json` 설정) | 타입별 누적 속도 차이 반영 |
+| 데이터 구조 | `extracted` (이번 session) + `snapshot` (누적) dual 필드 | rollback 기준점 보존, LLM 주입 효율 |
+| 추출 카테고리 | `traits` (성향/선호/습관) + `episodic` (경험/사건/에피소드) | events/episodes를 episodic으로 통합 |
+| state 관리 | `"active"` / `"inactive"` 수동 관리 | inactive 설정 시 해당 document 주입 제외 → rollback 수단 |
+| 압축 threshold | snapshot의 category별 count 기준 | 이전 누적분 포함 전체 count |
+| 압축 실패 안전 | 빈 결과 반환 시 원본 보존 | 데이터 손실 방지 |
+| 주입 기준 | 최신 active document의 snapshot | 가장 최근 정보 사용 |
 | 주입 role | User role, `<semantic_memory>` 블록 | LLM이 유저 맥락으로 해석 |
-| 주입 포맷 | DM 포함 모든 경우에 `[Username]` 태그 사용 | 포맷 일관성 |
 | 압축 모델 | Phase 1: `ILLMProvider` 기본 모델 사용 | **Phase 2 TODO**: `ILLMProvider.GenerateAsync`에 optional model 파라미터 추가 후 `CompressionModel` 적용 |
 | 중복 추출 방지 | `ConversationContext.SemanticMemoryRefs`(List\<ulong\>) — `Any()` 시 skip | 재시작/재시도 시 동일 session 중복 처리 방지 |
-| 추출 실패 격리 | `ExtractAndSaveAsync` 예외 → 호출 측에서 LogError 후 무시 | Compaction은 이미 완료 상태 |
 
 ---
 
 ## 데이터 모델 Contract
 
-### `SemanticMemoryFact` (record)
+### `SemanticMemoryData`
 
 ```csharp
 namespace ArisuBot.Core.Models;
 
-public record SemanticMemoryFact
+/// <summary>Semantic memory 데이터 단위. extracted / snapshot 양쪽에 사용.</summary>
+public class SemanticMemoryData
 {
-    // 독립적으로 이해 가능한 사실 문장 (subject 포함, 완결형)
-    public string Content { get; init; } = string.Empty;
+    public List<string> Traits   { get; set; } = new(); // 성향·선호·습관
+    public List<string> Episodic { get; set; } = new(); // 경험·사건·에피소드
+}
 
-    // 사실 분류: "trait" | "event" | "episode"
-    // trait   — 지속적 성향, 선호, 습관
-    // event   — 외부에서 발생한 구체적 사건
-    // episode — 대화 내에서 나온 경험담 또는 이야기
-    public string Type { get; init; } = string.Empty;
+public static class SemanticMemoryState
+{
+    public const string Active   = "active";
+    public const string Inactive = "inactive";
+}
+```
 
-    // 이 fact를 추출한 원본 세션 ID
-    public string SourceContextId { get; init; } = string.Empty;
+### `UserSemanticMemory` (도메인 모델)
 
-    // 추출 시각 (UTC)
-    public DateTime ExtractedAt { get; init; } = DateTime.UtcNow;
+```csharp
+namespace ArisuBot.Core.Models;
+
+public class UserSemanticMemory
+{
+    public string Id        { get; set; } = string.Empty; // MongoDB ObjectId (InsertOne 후 채워짐)
+    public ulong  UserId    { get; set; }                  // Discord User ID
+    public string SessionId { get; set; } = string.Empty; // 추출 원본 session ID
+    public string State     { get; set; } = SemanticMemoryState.Active;
+    public SemanticMemoryData Extracted { get; set; } = new(); // 이번 session 추출분
+    public SemanticMemoryData Snapshot  { get; set; } = new(); // 이전 snapshot + Extracted 누적
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 ```
 
 ### `SemanticMemoryDocument` (MongoDB 도큐먼트)
 
-```csharp
-namespace ArisuBot.Infrastructure.MongoDB.Documents;
-
-[BsonIgnoreExtraElements]
-public class SemanticMemoryDocument
-{
-    // Discord User ID를 primary key로 사용 (_id)
-    [BsonId]
-    [BsonRepresentation(BsonType.Int64)]
-    public ulong UserId { get; set; }
-
-    // 해당 유저에 대해 누적된 사실 목록 (trait + event + episode 혼합)
-    public List<SemanticMemoryFact> Facts { get; set; } = new();
-
-    // 마지막 갱신 시각 (UTC)
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-}
+```
+컬렉션: semantic_memory
 ```
 
-**컬렉션명**: `semantic_memory`  
-**인덱스**: `UserId` (`_id`이므로 자동 인덱싱)
+| 필드 | BSON key | 설명 |
+|------|----------|------|
+| `Id` | `_id` (ObjectId) | MongoDB 자동 생성 |
+| `UserId` | `userId` | Discord User ID (문자열 저장) |
+| `SessionId` | `sessionId` | 추출 원본 session ID |
+| `State` | `state` | "active" / "inactive" |
+| `Extracted` | `extracted` | `{ traits: [], episodic: [] }` |
+| `Snapshot` | `snapshot` | `{ traits: [], episodic: [] }` |
+| `CreatedAt` | `createdAt` | GetLatestActiveAsync 정렬 기준 |
+
+**인덱스**: `(userId, state, createdAt)` — `GetLatestActiveAsync` 조회 최적화
 
 ### `ConversationContext` 추가 필드
 
@@ -83,12 +91,10 @@ public class SemanticMemoryDocument
 // DB persist — 재시작 후에도 동일 세션 내 재주입 방지.
 public HashSet<ulong> InjectedSemanticMemoryUserIds { get; set; } = new();
 
-// 이 세션(old session)에서 semantic memory 추출이 완료된 Discord User ID 목록.
+// 이 세션에서 semantic memory 추출이 완료된 Discord User ID 목록.
 // Any() == true이면 이 세션에 대한 추출을 skip한다.
 public List<ulong> SemanticMemoryRefs { get; set; } = new();
 ```
-
-**`ConversationDocument` 매핑**: 두 필드 모두 persist. 기존 도큐먼트는 `BsonIgnoreExtraElements`로 null→빈 컬렉션 처리.
 
 ---
 
@@ -101,15 +107,15 @@ namespace ArisuBot.Core.Interfaces;
 
 public interface ISemanticMemoryRepository
 {
-    // userId에 해당하는 도큐먼트 반환. 없으면 null.
-    Task<SemanticMemoryDocument?> GetByUserIdAsync(ulong userId, CancellationToken ct = default);
+    // userId의 가장 최신 active document 반환. 없으면 null.
+    // createdAt 내림차순 정렬 후 첫 번째 active document.
+    Task<UserSemanticMemory?> GetLatestActiveAsync(ulong userId, CancellationToken ct = default);
 
-    // facts를 userId 도큐먼트에 append upsert.
-    // 도큐먼트 없으면 신규 생성.
-    Task AppendFactsAsync(ulong userId, IEnumerable<SemanticMemoryFact> facts, CancellationToken ct = default);
+    // 신규 session memory document 삽입. Id는 MongoDB가 생성.
+    Task CreateAsync(UserSemanticMemory memory, CancellationToken ct = default);
 
-    // userId 도큐먼트의 facts 배열 전체를 교체 (압축 후 호출).
-    Task ReplaceFactsAsync(ulong userId, IEnumerable<SemanticMemoryFact> facts, CancellationToken ct = default);
+    // 지정 document의 state를 변경 (수동 rollback/비활성화 용도).
+    Task SetStateAsync(string id, string state, CancellationToken ct = default);
 }
 ```
 
@@ -120,16 +126,17 @@ namespace ArisuBot.Core.Interfaces;
 
 public interface ISemanticMemoryService
 {
-    // compactedContext.Messages 전체를 LLM에 제공해 유저별 semantic memory 추출 및 저장.
-    // compactedContext.SemanticMemoryRefs.Any() == true이면 즉시 반환 (중복 방지).
-    // LLM 출력의 subject → compactedContext.Participants 딕셔너리로 userId 조회.
+    // context.Messages 전체를 LLM에 제공해 유저별 semantic memory 추출 및 저장.
+    // context.SemanticMemoryRefs.Any() == true이면 즉시 반환 (중복 방지).
+    // LLM 출력의 subject → context.Participants 딕셔너리로 userId 조회.
     //   조회 실패 시 LogError, 해당 유저 skip.
-    // 저장 성공 userId → compactedContext.SemanticMemoryRefs append 후 context 저장.
+    // per-session document 신규 생성. snapshot = 이전 snapshot + 이번 extracted.
+    // 저장 성공 userId → context.SemanticMemoryRefs append 후 context 저장.
     // 예외는 호출 측에 전파 (격리는 호출 측 책임).
-    Task ExtractAndSaveAsync(ConversationContext compactedContext, CancellationToken ct = default);
+    Task ExtractAndSaveAsync(ConversationContext context, CancellationToken ct = default);
 
-    // userId의 semantic memory fact 목록 반환. 없으면 빈 리스트.
-    Task<IReadOnlyList<SemanticMemoryFact>> GetFactsAsync(ulong userId, CancellationToken ct = default);
+    // userId의 가장 최신 active document의 snapshot 반환. 없으면 null.
+    Task<SemanticMemoryData?> GetLatestSnapshotAsync(ulong userId, CancellationToken ct = default);
 }
 ```
 
@@ -155,10 +162,9 @@ public interface ISemanticMemoryService
         "properties": {
           "subject":  { "type": "string" },
           "traits":   { "type": "array", "items": { "type": "string" } },
-          "events":   { "type": "array", "items": { "type": "string" } },
-          "episodes": { "type": "array", "items": { "type": "string" } }
+          "episodic": { "type": "array", "items": { "type": "string" } }
         },
-        "required": ["subject", "traits", "events", "episodes"]
+        "required": ["subject", "traits", "episodic"]
       }
     }
   },
@@ -170,13 +176,12 @@ public interface ISemanticMemoryService
 
 `src/ArisuBot.Host/prompts/semantic_memory_extraction.md`
 
-### 타입 정의
+### 카테고리 정의
 
-| Type | 내용 |
-|------|------|
-| `trait` | 지속적 성향, 선호도, 습관 (예: "Xeno는 다크 모드를 선호한다") |
-| `event` | 외부에서 발생한 구체적 사건 (예: "Xeno는 4월 20일 게임 대회에 참가했다") |
-| `episode` | 대화에서 나온 경험담 또는 이야기 (예: "Xeno는 이전 직장에서 번아웃을 경험했다고 언급했다") |
+| 카테고리 | 내용 |
+|----------|------|
+| `traits` | 지속적 성향, 선호도, 습관 (예: "Xeno는 다크 모드를 선호한다") |
+| `episodic` | 구체적 사건, 경험담, 이야기 (예: "Xeno는 이전 직장에서 번아웃을 경험했다고 언급했다") |
 
 ---
 
@@ -184,25 +189,19 @@ public interface ISemanticMemoryService
 
 ### 트리거
 
-`ExtractAndSaveAsync` 내, userId별 `AppendFactsAsync` 후 type별 count 확인:
+`ExtractAndSaveAsync` 내, snapshot 누적 후 count 확인:
 
 ```
-traitCount   = doc.Facts.Count(f => f.Type == "trait")
-eventCount   = doc.Facts.Count(f => f.Type == "event")
-episodeCount = doc.Facts.Count(f => f.Type == "episode")
-
-traitCount   >= TraitCompressionThreshold   → trait 압축
-eventCount   >= EventCompressionThreshold   → event 압축
-episodeCount >= EpisodeCompressionThreshold → episode 압축
+snapshot.Traits.Count   >= TraitCompressionThreshold   → traits 압축
+snapshot.Episodic.Count >= EpisodicCompressionThreshold → episodic 압축
 ```
-
-(count는 `AppendFacts` 후 in-memory로 계산 — DB 추가 조회 없음)
 
 ### 압축 실행
 
-압축 트리거 type별로 **독립** LLM 호출:
-1. 해당 type의 기존 facts content 목록 → LLM → 압축된 content 목록 반환
-2. 전체 facts에서 해당 type 제거 + 압축 결과 추가 → `ReplaceFactsAsync`
+각 카테고리 독립 LLM 호출:
+1. 해당 카테고리의 snapshot 목록 → LLM → 압축된 목록 반환
+2. 빈 결과 또는 파싱 실패 시 **원본 목록 보존** (데이터 손실 방지)
+3. 압축 결과로 snapshot.Traits / snapshot.Episodic 교체 후 `CreateAsync`
 
 ### 압축 출력 스키마
 
@@ -230,17 +229,13 @@ public class SemanticMemoryOptions
 {
     public const string SectionName = "SemanticMemory";
 
-    // trait 압축 트리거 임계값 (userId당 trait count)
+    // snapshot의 trait 항목 수가 이 값 이상이면 압축 실행
     public int TraitCompressionThreshold { get; set; } = 20;
 
-    // event 압축 트리거 임계값 (userId당 event count)
-    public int EventCompressionThreshold { get; set; } = 20;
-
-    // episode 압축 트리거 임계값 (userId당 episode count)
-    public int EpisodeCompressionThreshold { get; set; } = 20;
+    // snapshot의 episodic 항목 수가 이 값 이상이면 압축 실행
+    public int EpisodicCompressionThreshold { get; set; } = 20;
 
     // [Phase 2 예약] 압축 LLM 모델 지정. 현재 미사용.
-    // ILLMProvider.GenerateAsync model 파라미터 추가 후 적용 예정.
     public string? CompressionModel { get; set; }
 }
 ```
@@ -251,8 +246,7 @@ public class SemanticMemoryOptions
 {
   "SemanticMemory": {
     "TraitCompressionThreshold": 20,
-    "EventCompressionThreshold": 20,
-    "EpisodeCompressionThreshold": 20,
+    "EpisodicCompressionThreshold": 20,
     "CompressionModel": null
   }
 }
@@ -266,7 +260,7 @@ public class SemanticMemoryOptions
 
 - `ProcessBatchAsync` 내, `newMessage` 생성 후, LLM 호출 전
 - batch 내 각 userId에 대해 `InjectedSemanticMemoryUserIds`에 없으면 주입 시도
-- facts 없는 userId도 `InjectedSemanticMemoryUserIds`에 추가 (동일 세션 내 재조회 방지)
+- snapshot null(기억 없음) 유저도 `InjectedSemanticMemoryUserIds`에 추가 (동일 세션 내 재조회 방지)
 
 ### DB 저장 vs LLM 전달 분리
 
@@ -275,32 +269,28 @@ newMessage      → DB 저장 (원본 content 유지)
 llmUserMessage  → LLM 전달 (semantic memory block 포함 가능)
 ```
 
-### 주입 포맷 — 채널 (복수 유저)
+### 주입 포맷
 
 ```
 <semantic_memory>
-[Xeno]
-- [trait] Xeno는 다크 모드를 선호한다.
-- [event] Xeno는 4월 20일 게임 세션에 참여했다.
 [Alice]
-- [episode] Alice는 이전 직장에서 번아웃을 경험했다고 언급했다.
+[Traits]
+- Alice는 고양이를 좋아한다.
+- Alice는 다크 모드를 선호한다.
+[Episodic]
+- Alice는 도쿄를 방문했다.
+
+[Bob]
+[Traits]
+- Bob은 피자를 좋아한다.
 </semantic_memory>
 
-[Xeno]: 안녕
-[Alice]: 반가워
+[Alice]: 안녕
+[Bob]: 반가워
 ```
 
-### 주입 포맷 — DM (단일 유저)
-
-```
-<semantic_memory>
-[Xeno]
-- [trait] Xeno는 다크 모드를 선호한다.
-- [event] Xeno는 4월 20일 게임 세션에 참여했다.
-</semantic_memory>
-
-안녕
-```
+- `[Traits]` / `[Episodic]` 섹션은 해당 목록이 있을 때만 포함
+- 모든 유저의 snapshot이 null / 빈 경우 블록 전체 생략
 
 ---
 
@@ -348,45 +338,76 @@ _ = Task.Run(async () =>
 
 ## 테스트 범위
 
-### Unit — `SemanticMemoryServiceTests`
+### Unit — `SemanticMemoryServiceTests` (27개)
 
 | 케이스 | 검증 내용 |
 |--------|----------|
 | `SemanticMemoryRefs` not empty | skip (즉시 반환) |
-| subject 매핑 성공 | 올바른 userId로 fact 저장, Type 분류 정확 |
-| subject 매핑 실패 | LogError 호출, 해당 유저 skip, 나머지 계속 |
-| trait threshold 미달 | trait 압축 LLM 미호출 |
-| trait threshold 도달 | trait LLM 호출, trait facts만 교체 |
-| event / episode 각 threshold 독립 | 다른 type 압축에 영향 없음 |
-| 캐시 유효 | CacheHint 전달 확인 |
-| 캐시 만료 / null | CacheHint null 전달 확인 |
-| 부분 성공 | 성공 userId만 SemanticMemoryRefs에 추가 |
+| 이전 snapshot 없음 | extracted = snapshot 그대로 |
+| 이전 snapshot 있음 | snapshot = 이전 + 신규 누적 |
+| 성공 시 refs 추가 + context 저장 | `SemanticMemoryRefs.Add`, `SaveContextAsync` 1회 |
+| subject 매핑 실패 | skip, 미저장 |
+| zero users extracted | context 저장 후 return |
+| empty extracted | document 생성 (빈 데이터) |
+| trait threshold 미달 | LLM 1회 (extraction만) |
+| trait threshold 도달 | snapshot.Traits 압축 결과로 교체 |
+| episodic threshold 도달 | snapshot.Episodic 압축 결과로 교체 |
+| 압축 빈 결과 → 원본 보존 | Traits.Count 3 유지 |
+| 압축 invalid JSON → 원본 보존 | Traits.Count 3 유지 |
+| 압축 fenced JSON | 정상 파싱 |
+| 압축 malformed fence | fallback → 파싱 실패 → 원본 보존 |
+| extraction fenced JSON | 정상 파싱 |
+| extraction malformed fence | fallback → 파싱 실패 → context 저장 |
+| extraction invalid JSON | context 저장 |
+| `users` 속성 없음 | context 저장 |
+| empty subject | skip |
+| episodic 키 누락 | traits만 추출 |
+| 유효 cache | CacheHint 전달 |
+| 만료 cache | CacheHint null |
+| null cacheRef | CacheHint null |
+| cacheRef 있으나 expiresAt null | CacheHint null |
+| GetLatestSnapshotAsync 없음 | null 반환 |
+| GetLatestSnapshotAsync 있음 | snapshot 반환 |
 
-### Unit — `SemanticMemoryInjectionTests`
+### Unit — `SemanticMemoryInjectionTests` (10개)
 
 | 케이스 | 검증 내용 |
 |--------|----------|
-| 미주입 userId, facts 있음 | `<semantic_memory>` 블록 prepend, `[Username]` 태그 포함 |
-| 이미 주입 userId | content 변경 없음 |
-| facts 없음 | content 변경 없음, userId는 InjectedSet에 추가 |
-| 복수 userId batch | 미주입 전원 처리, 복수 섹션 포함 |
-| DM 단일 유저 | `[Username]` 태그 포함 |
-| DB 저장용 message | 원본 content 유지 (semantic_memory 블록 없음) |
+| 단일 유저, traits | `[Name]`, `[Traits]`, `<semantic_memory>` 포함 |
+| 단일 유저, episodic | `[Episodic]` 포함 |
+| 복수 유저 | 모든 이름 태그 포함 |
+| 복수 유저 순서 | Alice 섹션 < Bob 섹션 |
+| 빈 목록 | null 반환 |
+| null snapshot | null 반환 |
+| 모든 유저 빈 snapshot | null 반환 |
+| traits + episodic 혼합 | 두 섹션 모두 포함 |
+| traits + episodic 순서 | Traits 섹션이 Episodic 앞 |
+| traits만 있음 | Episodic 섹션 없음 |
+| episodic만 있음 | Traits 섹션 없음 |
 
-### Integration — `SemanticMemoryRepositoryTests`
+### Integration — `SemanticMemoryRepositoryTests` (11개)
 
 | 케이스 | 검증 내용 |
 |--------|----------|
-| AppendFacts (신규) | 도큐먼트 생성 확인 |
-| AppendFacts (기존) | facts 누적, type 혼합 확인 |
-| ReplaceFactsAsync | facts 배열 전체 교체 확인 |
-| GetByUserIdAsync | 올바른 도큐먼트 반환 |
+| GetLatestActiveAsync — 없음 | null 반환 |
+| GetLatestActiveAsync — 단일 active | 반환 |
+| GetLatestActiveAsync — 복수 active | 최신 반환 |
+| GetLatestActiveAsync — 모두 inactive | null 반환 |
+| GetLatestActiveAsync — mixed states | 최신 active 반환 |
+| CreateAsync — 신규 | 조회 성공 |
+| CreateAsync — Id 채워짐 | memory.Id 비어있지 않음 |
+| CreateAsync — state=active 기본 | active로 생성 |
+| SetStateAsync — active→inactive | GetLatestActive에 미노출 |
+| SetStateAsync — inactive→active | GetLatestActive에 노출 |
+| SetStateAsync — 대상만 영향 | 다른 document 영향 없음 |
+| 복수 userId 독립성 | 서로 간섭 없음 |
 
 ---
 
 ## Phase 2 TODO
 
-- [ ] Qdrant 마이그레이션 — `semantic_memory` MongoDB → Qdrant vector store. `SemanticMemoryFact` 단위 vector 변환.
+- [ ] Qdrant 마이그레이션 — `semantic_memory` MongoDB → Qdrant vector store
 - [ ] `ILLMProvider.GenerateAsync`에 optional `modelOverride` 파라미터 추가
 - [ ] `SemanticMemoryOptions.CompressionModel` 실제 적용
 - [ ] LLM tool — 유저가 semantic memory 직접 조회 가능하도록
+- [ ] SetStateAsync 호출 UI/커맨드 — rollback 운영 도구

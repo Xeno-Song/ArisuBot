@@ -1,11 +1,15 @@
 using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.Infrastructure.MongoDB.Documents;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace ArisuBot.Infrastructure.MongoDB;
 
-/// <summary>MongoDB 기반 유저별 semantic memory 저장소.</summary>
+/// <summary>
+/// MongoDB 기반 유저별 session semantic memory 저장소.
+/// document는 session별 생성. state("active"/"inactive")는 수동 관리.
+/// </summary>
 public class SemanticMemoryRepository : ISemanticMemoryRepository
 {
     private readonly IMongoCollection<SemanticMemoryDocument> _collection;
@@ -15,41 +19,41 @@ public class SemanticMemoryRepository : ISemanticMemoryRepository
         _collection = context.GetCollection<SemanticMemoryDocument>("semantic_memory");
     }
 
-    /// <summary>userId에 해당하는 semantic memory 반환. 없으면 null.</summary>
-    public async Task<UserSemanticMemory?> GetByUserIdAsync(ulong userId, CancellationToken ct = default)
+    /// <summary>
+    /// userId의 가장 최신 active document 반환. 없으면 null.
+    /// createdAt 내림차순 정렬 후 첫 번째 active document를 선택.
+    /// </summary>
+    public async Task<UserSemanticMemory?> GetLatestActiveAsync(ulong userId, CancellationToken ct = default)
     {
-        var filter = Builders<SemanticMemoryDocument>.Filter.Eq(d => d.UserId, userId.ToString());
-        var doc    = await _collection.Find(filter).FirstOrDefaultAsync(ct);
+        var filter = Builders<SemanticMemoryDocument>.Filter.And(
+            Builders<SemanticMemoryDocument>.Filter.Eq(d => d.UserId, userId.ToString()),
+            Builders<SemanticMemoryDocument>.Filter.Eq(d => d.State, SemanticMemoryState.Active));
+
+        var doc = await _collection
+            .Find(filter)
+            .SortByDescending(d => d.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
         return doc?.ToDomain();
     }
 
-    /// <summary>facts를 userId 도큐먼트에 append upsert. 도큐먼트 없으면 신규 생성.</summary>
-    public async Task AppendFactsAsync(ulong userId, IEnumerable<SemanticMemoryFact> facts, CancellationToken ct = default)
+    /// <summary>
+    /// 신규 session memory document 삽입. InsertOne 후 생성된 ObjectId를 memory.Id에 기록.
+    /// </summary>
+    public async Task CreateAsync(UserSemanticMemory memory, CancellationToken ct = default)
     {
-        var factDocs = facts.Select(SemanticMemoryFactDocument.FromDomain).ToList();
-        var userIdStr = userId.ToString();
-
-        var filter = Builders<SemanticMemoryDocument>.Filter.Eq(d => d.UserId, userIdStr);
-        var update = Builders<SemanticMemoryDocument>.Update
-            .PushEach(d => d.Facts, factDocs)
-            .Set(d => d.UpdatedAt, DateTime.UtcNow);
-
-        var options = new UpdateOptions { IsUpsert = true };
-        await _collection.UpdateOneAsync(filter, update, options, ct);
+        var doc = SemanticMemoryDocument.FromDomain(memory);
+        await _collection.InsertOneAsync(doc, null, ct);
+        // InsertOne 후 MongoDB가 채운 ObjectId를 도메인 모델에 반영
+        memory.Id = doc.Id.ToString();
     }
 
-    /// <summary>userId 도큐먼트의 facts 배열 전체를 교체한다. 압축 완료 후 호출.</summary>
-    public async Task ReplaceFactsAsync(ulong userId, IEnumerable<SemanticMemoryFact> facts, CancellationToken ct = default)
+    /// <summary>지정 document의 state를 변경한다 (수동 rollback/비활성화 용도).</summary>
+    public async Task SetStateAsync(string id, string state, CancellationToken ct = default)
     {
-        var factDocs = facts.Select(SemanticMemoryFactDocument.FromDomain).ToList();
-        var userIdStr = userId.ToString();
-
-        var filter = Builders<SemanticMemoryDocument>.Filter.Eq(d => d.UserId, userIdStr);
-        var update = Builders<SemanticMemoryDocument>.Update
-            .Set(d => d.Facts, factDocs)
-            .Set(d => d.UpdatedAt, DateTime.UtcNow);
-
-        var options = new UpdateOptions { IsUpsert = true };
-        await _collection.UpdateOneAsync(filter, update, options, ct);
+        var objectId = ObjectId.Parse(id);
+        var filter   = Builders<SemanticMemoryDocument>.Filter.Eq(d => d.Id, objectId);
+        var update   = Builders<SemanticMemoryDocument>.Update.Set(d => d.State, state);
+        await _collection.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 }

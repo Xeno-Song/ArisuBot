@@ -28,126 +28,193 @@ public class SemanticMemoryRepositoryTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private static SemanticMemoryFact MakeFact(string content, string type) => new()
+    /// <summary>테스트용 UserSemanticMemory 빌더. 최소한의 값만 지정.</summary>
+    private static UserSemanticMemory MakeMemory(
+        ulong userId,
+        string sessionId = "session001",
+        string state     = SemanticMemoryState.Active,
+        SemanticMemoryData? snapshot  = null,
+        SemanticMemoryData? extracted = null) => new()
     {
-        Content         = content,
-        Type            = type,
-        SourceContextId = "ctx001",
-        ExtractedAt     = DateTime.UtcNow
+        UserId    = userId,
+        SessionId = sessionId,
+        State     = state,
+        Extracted = extracted ?? new SemanticMemoryData(),
+        Snapshot  = snapshot  ?? new SemanticMemoryData(),
+        CreatedAt = DateTime.UtcNow
     };
 
     // =========================================================
-    // GetByUserIdAsync
+    // GetLatestActiveAsync
     // =========================================================
 
     [Fact]
-    public async Task GetByUserIdAsync_NotFound_ReturnsNull()
+    public async Task GetLatestActiveAsync_NoDocuments_ReturnsNull()
     {
-        var result = await _sut.GetByUserIdAsync(999UL);
+        var result = await _sut.GetLatestActiveAsync(999UL);
 
         Assert.Null(result);
     }
 
     [Fact]
-    public async Task GetByUserIdAsync_AfterAppend_ReturnsDocument()
+    public async Task GetLatestActiveAsync_SingleActive_ReturnsIt()
     {
-        await _sut.AppendFactsAsync(100UL, [MakeFact("Alice likes cats", "trait")]);
+        var memory = MakeMemory(100UL, snapshot: new SemanticMemoryData { Traits = ["Alice likes cats"] });
+        await _sut.CreateAsync(memory);
 
-        var result = await _sut.GetByUserIdAsync(100UL);
+        var result = await _sut.GetLatestActiveAsync(100UL);
 
         Assert.NotNull(result);
         Assert.Equal(100UL, result.UserId);
+        Assert.Contains("Alice likes cats", result.Snapshot.Traits);
+    }
+
+    [Fact]
+    public async Task GetLatestActiveAsync_MultipleActive_ReturnsLatest()
+    {
+        // 두 document 생성 — createdAt 차이를 보장하기 위해 순차 삽입
+        var older = MakeMemory(200UL, sessionId: "sess1",
+            snapshot: new SemanticMemoryData { Traits = ["old trait"] });
+        older.CreatedAt = DateTime.UtcNow.AddMinutes(-1);
+        await _sut.CreateAsync(older);
+
+        var newer = MakeMemory(200UL, sessionId: "sess2",
+            snapshot: new SemanticMemoryData { Traits = ["new trait"] });
+        await _sut.CreateAsync(newer);
+
+        var result = await _sut.GetLatestActiveAsync(200UL);
+
+        Assert.NotNull(result);
+        Assert.Equal("sess2", result.SessionId);
+        Assert.Contains("new trait", result.Snapshot.Traits);
+    }
+
+    [Fact]
+    public async Task GetLatestActiveAsync_AllInactive_ReturnsNull()
+    {
+        var memory = MakeMemory(300UL, state: SemanticMemoryState.Inactive);
+        await _sut.CreateAsync(memory);
+
+        var result = await _sut.GetLatestActiveAsync(300UL);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetLatestActiveAsync_MixedStates_ReturnsLatestActive()
+    {
+        // inactive document
+        var inactive = MakeMemory(400UL, sessionId: "sess1", state: SemanticMemoryState.Inactive,
+            snapshot: new SemanticMemoryData { Traits = ["old"] });
+        inactive.CreatedAt = DateTime.UtcNow.AddMinutes(-2);
+        await _sut.CreateAsync(inactive);
+
+        // active document (older)
+        var active = MakeMemory(400UL, sessionId: "sess2", state: SemanticMemoryState.Active,
+            snapshot: new SemanticMemoryData { Traits = ["active"] });
+        active.CreatedAt = DateTime.UtcNow.AddMinutes(-1);
+        await _sut.CreateAsync(active);
+
+        var result = await _sut.GetLatestActiveAsync(400UL);
+
+        Assert.NotNull(result);
+        Assert.Contains("active", result.Snapshot.Traits);
     }
 
     // =========================================================
-    // AppendFactsAsync
+    // CreateAsync
     // =========================================================
 
     [Fact]
-    public async Task AppendFactsAsync_NewUserId_CreatesDocument()
+    public async Task CreateAsync_NewDocument_CanBeRetrieved()
     {
-        await _sut.AppendFactsAsync(200UL, [MakeFact("Bob attends gym", "event")]);
+        var memory = MakeMemory(500UL,
+            snapshot: new SemanticMemoryData
+            {
+                Traits   = ["Alice likes cats"],
+                Episodic = ["Alice visited Tokyo"]
+            },
+            extracted: new SemanticMemoryData
+            {
+                Traits = ["Alice likes cats"]
+            });
+        await _sut.CreateAsync(memory);
 
-        var result = await _sut.GetByUserIdAsync(200UL);
+        var result = await _sut.GetLatestActiveAsync(500UL);
 
         Assert.NotNull(result);
-        Assert.Single(result.Facts);
-        Assert.Equal("Bob attends gym", result.Facts[0].Content);
-        Assert.Equal("event", result.Facts[0].Type);
+        Assert.Contains("Alice likes cats",   result.Snapshot.Traits);
+        Assert.Contains("Alice visited Tokyo", result.Snapshot.Episodic);
+        Assert.Contains("Alice likes cats",   result.Extracted.Traits);
     }
 
     [Fact]
-    public async Task AppendFactsAsync_ExistingUserId_AccumulatesFacts()
+    public async Task CreateAsync_PopulatesIdOnMemory()
     {
-        await _sut.AppendFactsAsync(300UL, [MakeFact("Trait 1", "trait")]);
-        await _sut.AppendFactsAsync(300UL, [MakeFact("Trait 2", "trait"), MakeFact("Event 1", "event")]);
+        var memory = MakeMemory(501UL);
+        Assert.Equal(string.Empty, memory.Id);
 
-        var result = await _sut.GetByUserIdAsync(300UL);
+        await _sut.CreateAsync(memory);
 
-        Assert.NotNull(result);
-        Assert.Equal(3, result.Facts.Count);
+        Assert.NotEmpty(memory.Id);
     }
 
     [Fact]
-    public async Task AppendFactsAsync_MixedTypes_AllStored()
+    public async Task CreateAsync_SetsStateActive_ByDefault()
     {
-        var facts = new[]
-        {
-            MakeFact("Trait",   "trait"),
-            MakeFact("Event",   "event"),
-            MakeFact("Episode", "episode")
-        };
-        await _sut.AppendFactsAsync(400UL, facts);
+        var memory = MakeMemory(502UL);
+        await _sut.CreateAsync(memory);
 
-        var result = await _sut.GetByUserIdAsync(400UL);
+        var result = await _sut.GetLatestActiveAsync(502UL);
 
         Assert.NotNull(result);
-        Assert.Equal(3, result.Facts.Count);
-        Assert.Contains(result.Facts, f => f.Type == "trait");
-        Assert.Contains(result.Facts, f => f.Type == "event");
-        Assert.Contains(result.Facts, f => f.Type == "episode");
+        Assert.Equal(SemanticMemoryState.Active, result.State);
     }
 
     // =========================================================
-    // ReplaceFactsAsync
+    // SetStateAsync
     // =========================================================
 
     [Fact]
-    public async Task ReplaceFactsAsync_ExistingDocument_ReplacesAll()
+    public async Task SetStateAsync_ActiveToInactive_DocumentNoLongerReturnedByGetLatestActive()
     {
-        await _sut.AppendFactsAsync(500UL, [MakeFact("Old fact 1", "trait"), MakeFact("Old fact 2", "event")]);
+        var memory = MakeMemory(600UL);
+        await _sut.CreateAsync(memory);
 
-        await _sut.ReplaceFactsAsync(500UL, [MakeFact("New fact", "trait")]);
+        await _sut.SetStateAsync(memory.Id, SemanticMemoryState.Inactive);
 
-        var result = await _sut.GetByUserIdAsync(500UL);
-
-        Assert.NotNull(result);
-        Assert.Single(result.Facts);
-        Assert.Equal("New fact", result.Facts[0].Content);
+        var result = await _sut.GetLatestActiveAsync(600UL);
+        Assert.Null(result);
     }
 
     [Fact]
-    public async Task ReplaceFactsAsync_NoDocument_CreatesDocument()
+    public async Task SetStateAsync_InactiveToActive_DocumentReturnedByGetLatestActive()
     {
-        await _sut.ReplaceFactsAsync(600UL, [MakeFact("Compressed trait", "trait")]);
+        var memory = MakeMemory(700UL, state: SemanticMemoryState.Inactive);
+        await _sut.CreateAsync(memory);
 
-        var result = await _sut.GetByUserIdAsync(600UL);
+        await _sut.SetStateAsync(memory.Id, SemanticMemoryState.Active);
 
+        var result = await _sut.GetLatestActiveAsync(700UL);
         Assert.NotNull(result);
-        Assert.Single(result.Facts);
     }
 
     [Fact]
-    public async Task ReplaceFactsAsync_EmptyList_ClearsFacts()
+    public async Task SetStateAsync_OnlyTargetDocumentAffected()
     {
-        await _sut.AppendFactsAsync(700UL, [MakeFact("some fact", "trait")]);
+        // 두 document 생성
+        var mem1 = MakeMemory(800UL, sessionId: "sess1");
+        var mem2 = MakeMemory(800UL, sessionId: "sess2");
+        await _sut.CreateAsync(mem1);
+        await _sut.CreateAsync(mem2);
 
-        await _sut.ReplaceFactsAsync(700UL, []);
+        // mem1만 비활성화
+        await _sut.SetStateAsync(mem1.Id, SemanticMemoryState.Inactive);
 
-        var result = await _sut.GetByUserIdAsync(700UL);
-
+        // 최신 active = mem2
+        var result = await _sut.GetLatestActiveAsync(800UL);
         Assert.NotNull(result);
-        Assert.Empty(result.Facts);
+        Assert.Equal("sess2", result.SessionId);
     }
 
     // =========================================================
@@ -157,15 +224,15 @@ public class SemanticMemoryRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task MultipleUserIds_StoredIndependently()
     {
-        await _sut.AppendFactsAsync(801UL, [MakeFact("User 801 fact", "trait")]);
-        await _sut.AppendFactsAsync(802UL, [MakeFact("User 802 fact", "event")]);
+        await _sut.CreateAsync(MakeMemory(901UL,
+            snapshot: new SemanticMemoryData { Traits = ["User 901 trait"] }));
+        await _sut.CreateAsync(MakeMemory(902UL,
+            snapshot: new SemanticMemoryData { Traits = ["User 902 trait"] }));
 
-        var result801 = await _sut.GetByUserIdAsync(801UL);
-        var result802 = await _sut.GetByUserIdAsync(802UL);
+        var result901 = await _sut.GetLatestActiveAsync(901UL);
+        var result902 = await _sut.GetLatestActiveAsync(902UL);
 
-        Assert.Single(result801!.Facts);
-        Assert.Single(result802!.Facts);
-        Assert.Equal("User 801 fact", result801.Facts[0].Content);
-        Assert.Equal("User 802 fact", result802.Facts[0].Content);
+        Assert.Contains("User 901 trait", result901!.Snapshot.Traits);
+        Assert.Contains("User 902 trait", result902!.Snapshot.Traits);
     }
 }

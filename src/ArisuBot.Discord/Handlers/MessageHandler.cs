@@ -415,12 +415,12 @@ public class MessageHandler
 
         if (uninjected.Count == 0) return newMessage;
 
-        var userMemories = new List<(string Name, IReadOnlyList<SemanticMemoryFact> Facts)>();
+        var userMemories = new List<(string Name, SemanticMemoryData? Snapshot)>();
         foreach (var (displayName, userId) in uninjected)
         {
-            var facts = await _semanticMemoryService.GetFactsAsync(userId);
-            userMemories.Add((displayName, facts));
-            // facts 여부에 관계없이 주입 완료로 기록 (재조회 방지)
+            var snapshot = await _semanticMemoryService.GetLatestSnapshotAsync(userId);
+            userMemories.Add((displayName, snapshot));
+            // snapshot 여부에 관계없이 주입 완료로 기록 (재조회 방지)
             context.InjectedSemanticMemoryUserIds.Add(userId);
         }
 
@@ -491,19 +491,25 @@ public class MessageHandler
     }
 
     /// <summary>
-    /// 유저별 semantic memory facts를 &lt;semantic_memory&gt; 블록으로 변환한다.
-    /// facts가 있는 유저만 포함. 모든 유저의 facts가 비어 있으면 null 반환.
+    /// 유저별 semantic memory snapshot을 &lt;semantic_memory&gt; 블록으로 변환한다.
+    /// snapshot이 있는 유저만 포함. 모든 유저의 snapshot이 비거나 null이면 null 반환.
+    /// 형식: [Name] → [Traits] → 항목 → [Episodic] → 항목 (각 섹션은 데이터 있을 때만 포함).
     /// </summary>
     internal static string? BuildSemanticMemoryBlock(
-        IEnumerable<(string Name, IReadOnlyList<ArisuBot.Core.Models.SemanticMemoryFact> Facts)> userMemories)
+        IEnumerable<(string Name, SemanticMemoryData? Snapshot)> userMemories)
     {
-        var sb    = new System.Text.StringBuilder();
+        var sb     = new System.Text.StringBuilder();
         var hasAny = false;
 
-        foreach (var (name, facts) in userMemories)
+        foreach (var (name, snapshot) in userMemories)
         {
-            var validFacts = facts.Where(f => !string.IsNullOrWhiteSpace(f.Content)).ToList();
-            if (validFacts.Count == 0) continue;
+            if (snapshot is null) continue;
+
+            var traits   = snapshot.Traits.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+            var episodic = snapshot.Episodic.Where(e => !string.IsNullOrWhiteSpace(e)).ToList();
+
+            // traits/episodic 모두 비어 있으면 이 유저 skip
+            if (traits.Count == 0 && episodic.Count == 0) continue;
 
             if (!hasAny)
             {
@@ -512,8 +518,20 @@ public class MessageHandler
             }
 
             sb.AppendLine($"[{name}]");
-            foreach (var fact in validFacts)
-                sb.AppendLine($"- [{fact.Type}] {fact.Content}");
+
+            if (traits.Count > 0)
+            {
+                sb.AppendLine("[Traits]");
+                foreach (var t in traits)
+                    sb.AppendLine($"- {t}");
+            }
+
+            if (episodic.Count > 0)
+            {
+                sb.AppendLine("[Episodic]");
+                foreach (var e in episodic)
+                    sb.AppendLine($"- {e}");
+            }
         }
 
         if (!hasAny) return null;

@@ -10,24 +10,22 @@ namespace ArisuBot.Tests.Unit.Services;
 
 public class SemanticMemoryServiceTests
 {
-    private readonly Mock<ILLMProvider>                _llmMock  = new();
-    private readonly Mock<ISemanticMemoryRepository>   _repoMock = new();
-    private readonly Mock<IConversationRepository>     _convMock = new();
+    private readonly Mock<ILLMProvider>                _llmMock    = new();
+    private readonly Mock<ISemanticMemoryRepository>   _repoMock   = new();
+    private readonly Mock<IConversationRepository>     _convMock   = new();
     private readonly Mock<IPromptLoader>               _promptMock = new();
 
     private SemanticMemoryService CreateSut(
-        int traitThreshold   = 20,
-        int eventThreshold   = 20,
-        int episodeThreshold = 20)
+        int traitThreshold    = 20,
+        int episodicThreshold = 20)
     {
         _promptMock.Setup(p => p.SemanticMemoryExtractionPrompt).Returns("[EXTRACT]");
         _promptMock.Setup(p => p.SemanticMemoryCompressionPrompt).Returns("[COMPRESS]");
 
         var opts = Options.Create(new SemanticMemoryOptions
         {
-            TraitCompressionThreshold   = traitThreshold,
-            EventCompressionThreshold   = eventThreshold,
-            EpisodeCompressionThreshold = episodeThreshold
+            TraitCompressionThreshold    = traitThreshold,
+            EpisodicCompressionThreshold = episodicThreshold
         });
         return new SemanticMemoryService(
             _llmMock.Object,
@@ -38,20 +36,19 @@ public class SemanticMemoryServiceTests
             NullLogger<SemanticMemoryService>.Instance);
     }
 
-    // --- 헬퍼 ---
+    // ─── 헬퍼 ────────────────────────────────────────────────────────────────
 
     private static ConversationContext MakeContext(
-        string contextId                     = "ctx001",
-        Dictionary<string, ulong>? participants  = null,
-        List<ulong>? semanticMemoryRefs      = null,
-        string? dynamicCacheRef              = null,
-        DateTimeOffset? cacheExpiresAt       = null) => new()
+        string contextId                    = "ctx001",
+        Dictionary<string, ulong>? participants = null,
+        List<ulong>? semanticMemoryRefs     = null,
+        string? dynamicCacheRef             = null,
+        DateTimeOffset? cacheExpiresAt      = null) => new()
     {
         Id           = contextId,
         Messages     =
         [
             new ChatMessage { Role = Role.System,    Content = "sys" },
-            new ChatMessage { Role = Role.User,      Content = "persona" },
             new ChatMessage { Role = Role.User,      Content = "hello", SenderName = "Alice" },
             new ChatMessage { Role = Role.Assistant, Content = "hi" }
         ],
@@ -61,26 +58,22 @@ public class SemanticMemoryServiceTests
         CacheExpiresAt     = cacheExpiresAt
     };
 
-    private static string ExtractionJson(string subject = "Alice",
-        string[] traits   = null!,
-        string[] events   = null!,
-        string[] episodes = null!) =>
+    private static string ExtractionJson(
+        string subject      = "Alice",
+        string[]? traits    = null,
+        string[]? episodic  = null) =>
         $$"""
         {
-          "users": [
-            {
-              "subject": "{{subject}}",
-              "traits":   [{{string.Join(",", (traits   ?? []).Select(t => $"\"{t}\""))}}],
-              "events":   [{{string.Join(",", (events   ?? []).Select(e => $"\"{e}\""))}}],
-              "episodes": [{{string.Join(",", (episodes ?? []).Select(e => $"\"{e}\""))}}]
-            }
-          ]
+          "users": [{
+            "subject": "{{subject}}",
+            "traits":   [{{string.Join(",", (traits   ?? []).Select(t => $"\"{t}\""))}}],
+            "episodic": [{{string.Join(",", (episodic ?? []).Select(e => $"\"{e}\""))}}]
+          }]
         }
         """;
 
     private void SetupLlm(params string[] responses)
     {
-        // 여러 호출 순차 반환
         var queue = new Queue<string>(responses);
         _llmMock.Setup(p => p.GenerateAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
@@ -99,16 +92,21 @@ public class SemanticMemoryServiceTests
         yield return new LLMResponse { Content = content };
     }
 
-    private void SetupRepoEmpty()
+    private void SetupRepoNoMemory()
     {
-        _repoMock.Setup(r => r.GetByUserIdAsync(It.IsAny<ulong>(), It.IsAny<CancellationToken>()))
+        _repoMock.Setup(r => r.GetLatestActiveAsync(It.IsAny<ulong>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((UserSemanticMemory?)null);
     }
 
-    private void SetupRepoWithFacts(ulong userId, List<SemanticMemoryFact> facts)
+    private void SetupRepoWithSnapshot(ulong userId, SemanticMemoryData snapshot)
     {
-        _repoMock.Setup(r => r.GetByUserIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserSemanticMemory { UserId = userId, Facts = facts });
+        _repoMock.Setup(r => r.GetLatestActiveAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserSemanticMemory
+            {
+                Id       = "doc001",
+                UserId   = userId,
+                Snapshot = snapshot
+            });
     }
 
     // =========================================================
@@ -134,77 +132,69 @@ public class SemanticMemoryServiceTests
     }
 
     // =========================================================
-    // 2. Subject → UserId 매핑
+    // 2. 신규 document 생성 + snapshot 누적
     // =========================================================
 
     [Fact]
-    public async Task ExtractAndSaveAsync_SubjectFound_AppendsFacts()
+    public async Task ExtractAndSaveAsync_NoPreviousSnapshot_CreatesDocumentWithExtractedOnly()
     {
+        // 이전 active 없음 → snapshot = extracted 그대로
         var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, [new SemanticMemoryFact { Content = "Alice likes cats", Type = "trait", SourceContextId = "ctx001", ExtractedAt = DateTime.UtcNow }]);
+        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"], episodic: ["Alice visited Tokyo"]));
+        SetupRepoNoMemory();
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
 
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts =>
-                facts.Any(f => f.Content == "Alice likes cats" && f.Type == "trait")),
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.UserId    == 100UL &&
+                m.SessionId == "ctx001" &&
+                m.State     == SemanticMemoryState.Active &&
+                m.Extracted.Traits.Contains("Alice likes cats") &&
+                m.Extracted.Episodic.Contains("Alice visited Tokyo") &&
+                m.Snapshot.Traits.Contains("Alice likes cats") &&
+                m.Snapshot.Episodic.Contains("Alice visited Tokyo")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExtractAndSaveAsync_SubjectNotFound_DoesNotAppendFacts()
+    public async Task ExtractAndSaveAsync_PreviousSnapshot_AccumulatesIntoSnapshot()
     {
-        // Participants에 없는 subject
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Bob"] = 200UL });
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
+        // 이전 active snapshot 있음 → snapshot = 이전 + 신규
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes dogs"]));
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData
+        {
+            Traits   = ["Alice likes cats"],
+            Episodic = ["Alice visited Tokyo"]
+        });
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
 
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_OneSubjectMissing_OtherSubjectStillProcessed()
-    {
-        var json = """
-            {
-              "users": [
-                { "subject": "Unknown", "traits": ["x"], "events": [], "episodes": [] },
-                { "subject": "Alice",   "traits": ["Alice likes cats"], "events": [], "episodes": [] }
-              ]
-            }
-            """;
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(json);
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, [new SemanticMemoryFact { Content = "Alice likes cats", Type = "trait", SourceContextId = "ctx001", ExtractedAt = DateTime.UtcNow }]);
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        // Unknown은 skip, Alice는 저장
-        _repoMock.Verify(r => r.AppendFactsAsync(100UL, It.IsAny<IEnumerable<SemanticMemoryFact>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                // extracted: 이번 session만
+                m.Extracted.Traits.SequenceEqual(new[] { "Alice likes dogs" }) &&
+                m.Extracted.Episodic.Count == 0 &&
+                // snapshot: 이전 + 이번 누적
+                m.Snapshot.Traits.Contains("Alice likes cats") &&
+                m.Snapshot.Traits.Contains("Alice likes dogs") &&
+                m.Snapshot.Episodic.Contains("Alice visited Tokyo")),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================
-    // 3. 성공 userId → SemanticMemoryRefs 추가 + context 저장
+    // 3. SemanticMemoryRefs 추가 + context 저장
     // =========================================================
 
     [Fact]
-    public async Task ExtractAndSaveAsync_SuccessfulUser_AddsToSemanticMemoryRefs()
+    public async Task ExtractAndSaveAsync_SuccessfulUser_AddsToRefsAndSavesContext()
     {
         var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, [new SemanticMemoryFact { Content = "t", Type = "trait", SourceContextId = "ctx001", ExtractedAt = DateTime.UtcNow }]);
+        SetupLlm(ExtractionJson("Alice", traits: ["t"]));
+        SetupRepoNoMemory();
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
@@ -214,106 +204,342 @@ public class SemanticMemoryServiceTests
     }
 
     [Fact]
-    public async Task ExtractAndSaveAsync_SubjectNotFound_NotAddedToSemanticMemoryRefs()
+    public async Task ExtractAndSaveAsync_SubjectNotFound_SkipsUserAndDoesNotAddToRefs()
     {
         var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Bob"] = 200UL });
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
+        SetupLlm(ExtractionJson("Alice", traits: ["t"]));
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
 
         Assert.Empty(ctx.SemanticMemoryRefs);
+        _repoMock.Verify(r => r.CreateAsync(It.IsAny<UserSemanticMemory>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // =========================================================
-    // 4. 압축 임계값 (type별 독립)
+    // 4. Zero users 경계
+    // =========================================================
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_ZeroUsersExtracted_SavesContextAndReturns()
+    {
+        var ctx = MakeContext();
+        SetupLlm("""{"users":[]}""");
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(It.IsAny<UserSemanticMemory>(), It.IsAny<CancellationToken>()), Times.Never);
+        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_EmptyExtracted_CreatesDocumentWithEmptyData()
+    {
+        // subject는 있으나 traits/episodic 모두 빈 배열
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(ExtractionJson("Alice")); // traits/episodic 모두 null → 빈 배열
+        SetupRepoNoMemory();
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        // document 생성, refs에 추가
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.UserId == 100UL &&
+                m.Extracted.Traits.Count == 0 &&
+                m.Snapshot.Traits.Count  == 0),
+            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains(100UL, ctx.SemanticMemoryRefs);
+    }
+
+    // =========================================================
+    // 5. 압축 — trait
     // =========================================================
 
     [Fact]
     public async Task ExtractAndSaveAsync_TraitBelowThreshold_NoCompression()
     {
         var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        // 2개 traits — threshold=5 미달
-        SetupRepoWithFacts(100UL, [
-            new SemanticMemoryFact { Type = "trait", Content = "t1", SourceContextId = "x", ExtractedAt = DateTime.UtcNow },
-            new SemanticMemoryFact { Type = "trait", Content = "t2", SourceContextId = "x", ExtractedAt = DateTime.UtcNow }
-        ]);
+        SetupLlm(ExtractionJson("Alice", traits: ["new trait"]));
+        // 이전 snapshot: 2개 traits → threshold=5 미달
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData
+        {
+            Traits = ["t1", "t2"]
+        });
         var sut = CreateSut(traitThreshold: 5);
 
         await sut.ExtractAndSaveAsync(ctx);
 
-        // Append 1회, Replace 없음
-        _repoMock.Verify(r => r.AppendFactsAsync(It.IsAny<ulong>(), It.IsAny<IEnumerable<SemanticMemoryFact>>(), It.IsAny<CancellationToken>()), Times.Once);
-        _repoMock.Verify(r => r.ReplaceFactsAsync(It.IsAny<ulong>(), It.IsAny<IEnumerable<SemanticMemoryFact>>(), It.IsAny<CancellationToken>()), Times.Never);
+        // LLM 1회만 호출 (extraction만, compression 없음)
+        _llmMock.Verify(p => p.GenerateAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<IReadOnlyList<ILLMTool>?>(),
+            It.IsAny<LLMToolExecutionContext?>(),
+            It.IsAny<CacheHint?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExtractAndSaveAsync_TraitThresholdReached_CompressesTrait()
+    public async Task ExtractAndSaveAsync_TraitThresholdReached_CompressesSnapshotTraits()
     {
         var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        // 1st LLM call: extraction, 2nd: trait compression
+        // 1st LLM: extraction, 2nd: compression
         SetupLlm(
-            ExtractionJson("Alice", traits: ["Alice likes cats"]),
-            """["Alice is fond of cats."]"""
+            ExtractionJson("Alice", traits: ["new trait"]),
+            """["Alice is a cat lover."]"""
         );
-        SetupRepoEmpty();
-        // threshold=2, 2개 traits 이미 존재 → append 후 2개 → 압축 트리거
-        SetupRepoWithFacts(100UL, [
-            new SemanticMemoryFact { Type = "trait", Content = "t1", SourceContextId = "x", ExtractedAt = DateTime.UtcNow },
-            new SemanticMemoryFact { Type = "trait", Content = "t2", SourceContextId = "x", ExtractedAt = DateTime.UtcNow }
-        ]);
+        // 이전 snapshot: 2개 traits, threshold=2 → 신규 추가 후 3개 → 압축 트리거
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData
+        {
+            Traits = ["t1", "t2"]
+        });
         var sut = CreateSut(traitThreshold: 2);
 
         await sut.ExtractAndSaveAsync(ctx);
 
-        _repoMock.Verify(r => r.ReplaceFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts =>
-                facts.Any(f => f.Type == "trait" && f.Content == "Alice is fond of cats.")),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_EventThresholdReached_CompressesEventOnly()
-    {
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(
-            ExtractionJson("Alice", events: ["Alice attended event X"]),
-            """["Alice went to event X."]"""
-        );
-        SetupRepoEmpty();
-        // 2개 events, threshold=2
-        SetupRepoWithFacts(100UL, [
-            new SemanticMemoryFact { Type = "event", Content = "e1", SourceContextId = "x", ExtractedAt = DateTime.UtcNow },
-            new SemanticMemoryFact { Type = "event", Content = "e2", SourceContextId = "x", ExtractedAt = DateTime.UtcNow }
-        ]);
-        var sut = CreateSut(eventThreshold: 2);
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.ReplaceFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts =>
-                facts.Any(f => f.Type == "event" && f.Content == "Alice went to event X.") &&
-                !facts.Any(f => f.Type == "trait")),
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.Snapshot.Traits.Count == 1 &&
+                m.Snapshot.Traits[0]    == "Alice is a cat lover."),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================
-    // 5. CacheHint 전달
+    // 6. 압축 — episodic
+    // =========================================================
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_EpisodicThresholdReached_CompressesSnapshotEpisodic()
+    {
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(
+            ExtractionJson("Alice", episodic: ["new episode"]),
+            """["Alice has travelled to Tokyo."]"""
+        );
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData
+        {
+            Episodic = ["ep1", "ep2"]
+        });
+        var sut = CreateSut(episodicThreshold: 2);
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.Snapshot.Episodic.Count == 1 &&
+                m.Snapshot.Episodic[0]    == "Alice has travelled to Tokyo."),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================
+    // 7. 압축 실패 시 원본 보존
+    // =========================================================
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_CompressionFails_PreservesOriginalTraits()
+    {
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        // 압축 LLM이 빈 배열 반환 → 원본 보존
+        SetupLlm(
+            ExtractionJson("Alice", traits: ["new trait"]),
+            "[]"  // empty → 원본 유지
+        );
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData
+        {
+            Traits = ["t1", "t2"]
+        });
+        var sut = CreateSut(traitThreshold: 2);
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        // 원본 3개 보존
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.Snapshot.Traits.Count == 3 &&
+                m.Snapshot.Traits.Contains("t1") &&
+                m.Snapshot.Traits.Contains("t2") &&
+                m.Snapshot.Traits.Contains("new trait")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_CompressionInvalidJson_PreservesOriginalTraits()
+    {
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(
+            ExtractionJson("Alice", traits: ["new"]),
+            "NOT VALID JSON"
+        );
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData
+        {
+            Traits = ["t1", "t2"]
+        });
+        var sut = CreateSut(traitThreshold: 2);
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m => m.Snapshot.Traits.Count == 3),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================
+    // 8. 압축 fenced JSON 처리
+    // =========================================================
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_CompressionMarkdownFence_ParsedCorrectly()
+    {
+        var fenced = """
+            ```json
+            ["Alice is a cat lover."]
+            ```
+            """;
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(ExtractionJson("Alice", traits: ["new"]), fenced);
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData { Traits = ["t1", "t2"] });
+        var sut = CreateSut(traitThreshold: 2);
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.Snapshot.Traits.Count == 1 &&
+                m.Snapshot.Traits[0]    == "Alice is a cat lover."),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_CompressionMalformedFence_PreservesOriginals()
+    {
+        // fence 시작은 있지만 newline 없음 → StripMarkdownFence fallback → 원본 보존
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(
+            ExtractionJson("Alice", traits: ["new trait"]),
+            "```notjson"  // malformed: starts with ``` but no newline
+        );
+        SetupRepoWithSnapshot(100UL, new SemanticMemoryData { Traits = ["t1", "t2"] });
+        var sut = CreateSut(traitThreshold: 2);
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        // parse fails → compressed = [] → originals preserved
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m => m.Snapshot.Traits.Count == 3),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================
+    // 9. Extraction JSON 경계
+    // =========================================================
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_MarkdownFencedExtractionJson_ParsedCorrectly()
+    {
+        var fenced = """
+            ```json
+            {"users":[{"subject":"Alice","traits":["cat lover"],"episodic":[]}]}
+            ```
+            """;
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(fenced);
+        SetupRepoNoMemory();
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m => m.Snapshot.Traits.Contains("cat lover")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_MalformedFenceExtraction_TreatsAsRaw()
+    {
+        // fence 시작은 있지만 newline 없음 → StripMarkdownFence fallback → JSON 파싱 실패 → context 저장
+        var ctx = MakeContext();
+        SetupLlm("```notjson");  // malformed: starts with ``` but no newline
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(It.IsAny<UserSemanticMemory>(), It.IsAny<CancellationToken>()), Times.Never);
+        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_InvalidExtractionJson_SavesContextAndReturns()
+    {
+        var ctx = MakeContext();
+        SetupLlm("NOT VALID JSON {{{");
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(It.IsAny<UserSemanticMemory>(), It.IsAny<CancellationToken>()), Times.Never);
+        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_MissingUsersProperty_SavesContextAndReturns()
+    {
+        var ctx = MakeContext();
+        SetupLlm("""{"other":"value"}""");
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(It.IsAny<UserSemanticMemory>(), It.IsAny<CancellationToken>()), Times.Never);
+        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_EmptySubject_FilteredOut()
+    {
+        var ctx = MakeContext();
+        SetupLlm("""{"users":[{"subject":"","traits":["t"],"episodic":[]}]}""");
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(It.IsAny<UserSemanticMemory>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExtractAndSaveAsync_MissingEpisodicField_ExtractsTraitsOnly()
+    {
+        // episodic 키 누락 → ReadStringArray missing branch → episodic=[]
+        var partialJson = """{"users":[{"subject":"Alice","traits":["Alice likes cats"]}]}""";
+        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
+        SetupLlm(partialJson);
+        SetupRepoNoMemory();
+        var sut = CreateSut();
+
+        await sut.ExtractAndSaveAsync(ctx);
+
+        _repoMock.Verify(r => r.CreateAsync(
+            It.Is<UserSemanticMemory>(m =>
+                m.Snapshot.Traits.Contains("Alice likes cats") &&
+                m.Snapshot.Episodic.Count == 0),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================
+    // 10. CacheHint 전달
     // =========================================================
 
     [Fact]
     public async Task ExtractAndSaveAsync_ValidCache_PassesCacheHint()
     {
         var expires = DateTimeOffset.UtcNow.AddMinutes(10);
-        var ctx = MakeContext(dynamicCacheRef: "cache123", cacheExpiresAt: expires);
+        var ctx     = MakeContext(dynamicCacheRef: "cache123", cacheExpiresAt: expires);
         ctx.CachedMessageCount = 3;
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, []);
+        SetupLlm(ExtractionJson("Alice", traits: ["t"]));
+        SetupRepoNoMemory();
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
@@ -331,11 +557,10 @@ public class SemanticMemoryServiceTests
     [Fact]
     public async Task ExtractAndSaveAsync_ExpiredCache_NoCacheHint()
     {
-        var expires = DateTimeOffset.UtcNow.AddMinutes(-1); // 만료
-        var ctx = MakeContext(dynamicCacheRef: "cache123", cacheExpiresAt: expires);
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, []);
+        var expires = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var ctx     = MakeContext(dynamicCacheRef: "cache123", cacheExpiresAt: expires);
+        SetupLlm(ExtractionJson("Alice", traits: ["t"]));
+        SetupRepoNoMemory();
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
@@ -354,9 +579,8 @@ public class SemanticMemoryServiceTests
     public async Task ExtractAndSaveAsync_NullCacheRef_NoCacheHint()
     {
         var ctx = MakeContext(dynamicCacheRef: null);
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, []);
+        SetupLlm(ExtractionJson("Alice", traits: ["t"]));
+        SetupRepoNoMemory();
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
@@ -369,54 +593,14 @@ public class SemanticMemoryServiceTests
             It.IsAny<string?>(),
             It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // =========================================================
-    // 5-b. 추가 경계 케이스
-    // =========================================================
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_ZeroUsersExtracted_SavesContextAndReturns()
-    {
-        // LLM이 빈 users 배열 반환 → AppendFacts 없이 SaveContext 호출 후 종료
-        var ctx = MakeContext();
-        SetupLlm("""{"users":[]}""");
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_EmptyFactsForUser_AddsToRefsWithoutAppend()
-    {
-        // user subject 매핑 성공 but traits/events/episodes 모두 빈 배열 → AppendFacts 없이 Refs에 추가
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(ExtractionJson("Alice")); // traits/events/episodes 모두 null → 빈 배열
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        Assert.Contains(100UL, ctx.SemanticMemoryRefs);
     }
 
     [Fact]
     public async Task ExtractAndSaveAsync_NullCacheExpiresAtWithCacheRef_NoCacheHint()
     {
-        // DynamicCacheRef 있으나 CacheExpiresAt null → null hint (line 176 왼쪽 branch)
         var ctx = MakeContext(dynamicCacheRef: "cache123", cacheExpiresAt: null);
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, []);
+        SetupLlm(ExtractionJson("Alice", traits: ["t"]));
+        SetupRepoNoMemory();
         var sut = CreateSut();
 
         await sut.ExtractAndSaveAsync(ctx);
@@ -431,235 +615,38 @@ public class SemanticMemoryServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
-    public async Task ExtractAndSaveAsync_EpisodeThresholdReached_CompressesEpisode()
-    {
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(
-            ExtractionJson("Alice", episodes: ["Alice visited Tokyo"]),
-            """["Alice has been to Tokyo."]"""
-        );
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, [
-            new SemanticMemoryFact { Type = "episode", Content = "ep1", SourceContextId = "x", ExtractedAt = DateTime.UtcNow },
-            new SemanticMemoryFact { Type = "episode", Content = "ep2", SourceContextId = "x", ExtractedAt = DateTime.UtcNow }
-        ]);
-        var sut = CreateSut(episodeThreshold: 2);
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.ReplaceFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts =>
-                facts.Any(f => f.Type == "episode" && f.Content == "Alice has been to Tokyo.")),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_CompressCheckNullMemory_CompletesNormally()
-    {
-        // CompressIfNeededAsync: GetByUserIdAsync null 반환 → early return, Refs 정상 추가
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(ExtractionJson("Alice", traits: ["Alice likes cats"]));
-        SetupRepoEmpty(); // AppendFacts 후 GetByUserId도 null 반환
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.ReplaceFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        Assert.Contains(100UL, ctx.SemanticMemoryRefs);
-    }
-
     // =========================================================
-    // 5-c. ParseExtractionResult / ParseCompressedFacts 경계 케이스
+    // 11. GetLatestSnapshotAsync
     // =========================================================
 
     [Fact]
-    public async Task ExtractAndSaveAsync_MarkdownFencedJson_ParsesCorrectly()
+    public async Task GetLatestSnapshotAsync_NoActiveDocument_ReturnsNull()
     {
-        // LLM이 ```json ... ``` fence로 감싸 반환해도 정상 파싱
-        var fencedJson = """
-            ```json
-            {"users":[{"subject":"Alice","traits":["cat lover"],"events":[],"episodes":[]}]}
-            ```
-            """;
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(fencedJson);
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, []);
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts => facts.Any(f => f.Content == "cat lover")),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_InvalidExtractionJson_SavesContextAndReturns()
-    {
-        // 추출 LLM이 invalid JSON 반환 → ParseExtractionResult exception catch → SaveContext 후 종료
-        var ctx = MakeContext();
-        SetupLlm("NOT VALID JSON {{{{");
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_JsonMissingUsersProperty_ReturnsEarlyWithSave()
-    {
-        // LLM이 "users" 키 없는 JSON 반환 → TryGetProperty 실패 → empty list → SaveContext 후 종료
-        var ctx = MakeContext();
-        SetupLlm("""{"other":"value"}""");
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_UserMissingEventsField_ExtractsTraitsOnly()
-    {
-        // user 객체에 "events" 키 누락 → ReadStringArray missing branch → events=빈 배열, traits 정상 추출
-        var partialJson = """
-            {"users":[{"subject":"Alice","traits":["Alice likes cats"],"episodes":[]}]}
-            """;
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(partialJson);
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, []);
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts =>
-                facts.Any(f => f.Type == "trait" && f.Content == "Alice likes cats") &&
-                !facts.Any(f => f.Type == "event")),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_CompressionMarkdownFence_ParsesCorrectly()
-    {
-        // 압축 LLM이 fenced JSON 반환해도 정상 파싱
-        var fencedCompression = """
-            ```json
-            ["Alice is fond of cats."]
-            ```
-            """;
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(
-            ExtractionJson("Alice", traits: ["Alice likes cats"]),
-            fencedCompression
-        );
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, [
-            new SemanticMemoryFact { Type = "trait", Content = "t1", SourceContextId = "x", ExtractedAt = DateTime.UtcNow },
-            new SemanticMemoryFact { Type = "trait", Content = "t2", SourceContextId = "x", ExtractedAt = DateTime.UtcNow }
-        ]);
-        var sut = CreateSut(traitThreshold: 2);
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.ReplaceFactsAsync(
-            100UL,
-            It.Is<IEnumerable<SemanticMemoryFact>>(facts =>
-                facts.Any(f => f.Type == "trait" && f.Content == "Alice is fond of cats.")),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_EmptySubjectInJson_FilteredOutLikeNoUser()
-    {
-        // subject가 빈 문자열 → IsNullOrWhiteSpace true → 결과에서 제외 → ZeroUsers 경로
-        var emptySubjectJson = """{"users":[{"subject":"","traits":["t"],"events":[],"episodes":[]}]}""";
-        var ctx = MakeContext();
-        SetupLlm(emptySubjectJson);
-        var sut = CreateSut();
-
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.AppendFactsAsync(
-            It.IsAny<ulong>(),
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Never);
-        _convMock.Verify(c => c.SaveContextAsync(ctx, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExtractAndSaveAsync_CompressionReturnsNullJson_NullCoalesced()
-    {
-        // 압축 LLM이 "null" 반환 → Deserialize returns null → ?? [] → empty compressed list
-        var ctx = MakeContext(participants: new Dictionary<string, ulong> { ["Alice"] = 100UL });
-        SetupLlm(
-            ExtractionJson("Alice", traits: ["Alice likes cats"]),
-            "null"  // Deserialize<List<string>>("null") returns null → ?? []
-        );
-        SetupRepoEmpty();
-        SetupRepoWithFacts(100UL, [
-            new SemanticMemoryFact { Type = "trait", Content = "t1", SourceContextId = "x", ExtractedAt = DateTime.UtcNow },
-            new SemanticMemoryFact { Type = "trait", Content = "t2", SourceContextId = "x", ExtractedAt = DateTime.UtcNow }
-        ]);
-        var sut = CreateSut(traitThreshold: 2);
-
-        // 압축 결과가 null → empty list → ReplaceFactsAsync 호출됨 (threshold 충족)
-        await sut.ExtractAndSaveAsync(ctx);
-
-        _repoMock.Verify(r => r.ReplaceFactsAsync(
-            100UL,
-            It.IsAny<IEnumerable<SemanticMemoryFact>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // =========================================================
-    // 6. GetFactsAsync
-    // =========================================================
-
-    [Fact]
-    public async Task GetFactsAsync_NoDocument_ReturnsEmptyList()
-    {
-        _repoMock.Setup(r => r.GetByUserIdAsync(999UL, It.IsAny<CancellationToken>()))
+        _repoMock.Setup(r => r.GetLatestActiveAsync(999UL, It.IsAny<CancellationToken>()))
             .ReturnsAsync((UserSemanticMemory?)null);
         var sut = CreateSut();
 
-        var result = await sut.GetFactsAsync(999UL);
+        var result = await sut.GetLatestSnapshotAsync(999UL);
 
-        Assert.Empty(result);
+        Assert.Null(result);
     }
 
     [Fact]
-    public async Task GetFactsAsync_DocumentExists_ReturnsFacts()
+    public async Task GetLatestSnapshotAsync_ActiveExists_ReturnsSnapshot()
     {
-        var facts = new List<SemanticMemoryFact>
+        var snapshot = new SemanticMemoryData
         {
-            new() { Content = "Alice likes cats", Type = "trait", SourceContextId = "ctx001", ExtractedAt = DateTime.UtcNow }
+            Traits   = ["Alice likes cats"],
+            Episodic = ["Alice visited Tokyo"]
         };
-        _repoMock.Setup(r => r.GetByUserIdAsync(100UL, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserSemanticMemory { UserId = 100UL, Facts = facts });
+        _repoMock.Setup(r => r.GetLatestActiveAsync(100UL, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserSemanticMemory { UserId = 100UL, Snapshot = snapshot });
         var sut = CreateSut();
 
-        var result = await sut.GetFactsAsync(100UL);
+        var result = await sut.GetLatestSnapshotAsync(100UL);
 
-        Assert.Single(result);
-        Assert.Equal("Alice likes cats", result[0].Content);
+        Assert.NotNull(result);
+        Assert.Contains("Alice likes cats",   result.Traits);
+        Assert.Contains("Alice visited Tokyo", result.Episodic);
     }
 }

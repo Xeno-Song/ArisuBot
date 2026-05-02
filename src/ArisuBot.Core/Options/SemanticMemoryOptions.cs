@@ -5,14 +5,11 @@ public class SemanticMemoryOptions
 {
     public const string SectionName = "SemanticMemory";
 
-    /// <summary>trait 압축 트리거 임계값 (userId당 trait fact 수).</summary>
+    /// <summary>snapshot의 trait 항목 수가 이 값 이상이면 압축 실행.</summary>
     public int TraitCompressionThreshold { get; set; } = 20;
 
-    /// <summary>event 압축 트리거 임계값 (userId당 event fact 수).</summary>
-    public int EventCompressionThreshold { get; set; } = 20;
-
-    /// <summary>episode 압축 트리거 임계값 (userId당 episode fact 수).</summary>
-    public int EpisodeCompressionThreshold { get; set; } = 20;
+    /// <summary>snapshot의 episodic 항목 수가 이 값 이상이면 압축 실행.</summary>
+    public int EpisodicCompressionThreshold { get; set; } = 20;
 
     /// <summary>
     /// [Phase 2 예약] 압축 LLM 모델 지정. 현재 미사용.

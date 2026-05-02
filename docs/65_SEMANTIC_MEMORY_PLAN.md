@@ -334,6 +334,22 @@ _ = Task.Run(async () =>
 });
 ```
 
+### `/compact` 슬래시 커맨드 (`CompactCommand`)
+
+Compaction 성공 후 semantic memory 추출 연속 실행. 결과를 ephemeral 응답에 포함.
+
+```csharp
+var newContext = await _compactionService.RunAsync(context);
+
+var memoryStatus = "완료";
+try { await _semanticMemoryService.ExtractAndSaveAsync(context); }
+catch (Exception ex) { memoryStatus = $"실패 ({ex.Message})"; }
+
+await FollowupAsync(
+    $"Compaction 완료. 새 세션 ID: `{newContext.Id}`\nSemantic Memory 추출: {memoryStatus}",
+    ephemeral: true);
+```
+
 ---
 
 ## 테스트 범위

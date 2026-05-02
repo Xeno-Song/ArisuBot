@@ -7,17 +7,25 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace ArisuBot.Discord.Commands;
 
-/// <summary>/compact 슬래시 커맨드. 현재 채널/DM 세션에 즉시 Compaction을 실행한다.</summary>
+/// <summary>
+/// /compact 슬래시 커맨드. 현재 채널/DM 세션에 즉시 Compaction을 실행하고,
+/// 성공 시 semantic memory 추출도 연속 실행한다.
+/// </summary>
 [ExcludeFromCodeCoverage(Justification = "Discord.Net SocketInteractionContext 실연결 필요. E2E 테스트 대상.")]
 public class CompactCommand : InteractionModuleBase<SocketInteractionContext>
 {
-    private readonly ConversationService _conversationService;
-    private readonly ICompactionService  _compactionService;
+    private readonly ConversationService      _conversationService;
+    private readonly ICompactionService       _compactionService;
+    private readonly ISemanticMemoryService   _semanticMemoryService;
 
-    public CompactCommand(ConversationService conversationService, ICompactionService compactionService)
+    public CompactCommand(
+        ConversationService conversationService,
+        ICompactionService compactionService,
+        ISemanticMemoryService semanticMemoryService)
     {
-        _conversationService = conversationService;
-        _compactionService   = compactionService;
+        _conversationService   = conversationService;
+        _compactionService     = compactionService;
+        _semanticMemoryService = semanticMemoryService;
     }
 
     /// <summary>현재 세션에 Compaction을 즉시 실행한다. Cooldown 조건 무시 — 강제 실행.</summary>
@@ -51,8 +59,19 @@ public class CompactCommand : InteractionModuleBase<SocketInteractionContext>
 
         var newContext = await _compactionService.RunAsync(context);
 
+        // Compaction 성공 후 semantic memory 추출 — 실패해도 compaction 결과는 유지
+        var memoryStatus = "완료";
+        try
+        {
+            await _semanticMemoryService.ExtractAndSaveAsync(context);
+        }
+        catch (Exception ex)
+        {
+            memoryStatus = $"실패 ({ex.Message})";
+        }
+
         await FollowupAsync(
-            $"Compaction 완료. 새 세션 ID: `{newContext.Id}`",
+            $"Compaction 완료. 새 세션 ID: `{newContext.Id}`\nSemantic Memory 추출: {memoryStatus}",
             ephemeral: true);
     }
 }

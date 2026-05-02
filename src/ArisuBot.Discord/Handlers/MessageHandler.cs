@@ -2,6 +2,7 @@ using ArisuBot.Core.Interfaces;
 using ArisuBot.Core.Models;
 using ArisuBot.Core.Options;
 using ArisuBot.Core.Services;
+using System.Text;
 using ArisuBot.Discord.Options;
 using Discord;
 using Discord.WebSocket;
@@ -27,6 +28,7 @@ public class MessageHandler
     private readonly IAdminNotifier _adminNotifier;
     private readonly IPromptLoader _promptLoader;
     private readonly ICompactionService _compactionService;
+    private readonly ISemanticMemoryService _semanticMemoryService;
     private readonly CompactionTriggerEvaluator _triggerEvaluator;
     private readonly IProcessingEventEmitter _processingEmitter;
     private readonly ILogger<MessageHandler> _logger;
@@ -50,24 +52,26 @@ public class MessageHandler
         IAdminNotifier adminNotifier,
         IPromptLoader promptLoader,
         ICompactionService compactionService,
+        ISemanticMemoryService semanticMemoryService,
         CompactionTriggerEvaluator triggerEvaluator,
         IProcessingEventEmitter processingEmitter,
         ILogger<MessageHandler> logger)
     {
-        _client              = client;
-        _discordOptions      = options.Value;
-        _listenerOptions     = options.Value.MessageListener;
-        _conversationService = conversationService;
-        _llmProvider         = llmProvider;
-        _cacheManager        = cacheManager;
-        _tools               = tools.ToList();
-        _messageLogger       = messageLogger;
-        _adminNotifier       = adminNotifier;
-        _promptLoader        = promptLoader;
-        _compactionService   = compactionService;
-        _triggerEvaluator    = triggerEvaluator;
-        _processingEmitter   = processingEmitter;
-        _logger              = logger;
+        _client                 = client;
+        _discordOptions         = options.Value;
+        _listenerOptions        = options.Value.MessageListener;
+        _conversationService    = conversationService;
+        _llmProvider            = llmProvider;
+        _cacheManager           = cacheManager;
+        _tools                  = tools.ToList();
+        _messageLogger          = messageLogger;
+        _adminNotifier          = adminNotifier;
+        _promptLoader           = promptLoader;
+        _compactionService      = compactionService;
+        _semanticMemoryService  = semanticMemoryService;
+        _triggerEvaluator       = triggerEvaluator;
+        _processingEmitter      = processingEmitter;
+        _logger                 = logger;
     }
 
     /// <summary>메시지 수신 시 호출. 응답 여부 판단 후 컨텍스트 슬롯에 등록 — LLM 처리 중이면 pending 큐에 누적.</summary>
@@ -249,9 +253,14 @@ public class MessageHandler
                 SenderName = senderName
             };
 
+            // Semantic memory 주입 — 미주입 유저의 facts를 LLM 메시지에 prepend
+            // DB 저장용 newMessage는 원본 content 유지, LLM 전달용만 수정
+            var llmMessage = await BuildLlmMessageWithSemanticMemoryAsync(
+                context, batch, newMessage);
+
             // BuildMessageList: 현재 컨텍스트 히스토리 + 새 유저 메시지 조합
             var messages = _conversationService.BuildMessageList(
-                context, newMessage, _promptLoader.SystemPrompt);
+                context, llmMessage, _promptLoader.SystemPrompt);
 
             // velocity 추적용 타임스탬프 기록
             context.RecentMessageTimestamps.Add(DateTimeOffset.UtcNow);
@@ -352,6 +361,17 @@ public class MessageHandler
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Compaction 실행 실패 — contextId={Id}", context.Id);
+                        return;
+                    }
+
+                    // Compaction 성공 후 semantic memory 추출 — 완전 독립 실행
+                    try
+                    {
+                        await _semanticMemoryService.ExtractAndSaveAsync(context, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "SemanticMemory 추출 실패 — contextId={Id}", context.Id);
                     }
                 });
             }
@@ -373,6 +393,45 @@ public class MessageHandler
             await firstMsg.Channel.SendMessageAsync(
                 "지금은 응답하기 어렵습니다. 잠시 후 다시 말 걸어주세요!");
         }
+    }
+
+    /// <summary>
+    /// 미주입 유저의 semantic memory를 LLM 전달용 메시지에 prepend한다.
+    /// context.InjectedSemanticMemoryUserIds에 없는 유저만 처리.
+    /// DB 저장용 newMessage는 변경 없음 — LLM 전달용 복사본만 수정.
+    /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "ISemanticMemoryService DB 의존 — E2E 테스트 대상.")]
+    private async Task<ChatMessage> BuildLlmMessageWithSemanticMemoryAsync(
+        ConversationContext context,
+        IReadOnlyList<PendingMessage> batch,
+        ChatMessage newMessage)
+    {
+        // 미주입 유저 목록
+        var uninjected = batch
+            .Select(p => (p.DisplayName, UserId: p.Message.Author.Id))
+            .DistinctBy(u => u.UserId)
+            .Where(u => !context.InjectedSemanticMemoryUserIds.Contains(u.UserId))
+            .ToList();
+
+        if (uninjected.Count == 0) return newMessage;
+
+        var userMemories = new List<(string Name, IReadOnlyList<SemanticMemoryFact> Facts)>();
+        foreach (var (displayName, userId) in uninjected)
+        {
+            var facts = await _semanticMemoryService.GetFactsAsync(userId);
+            userMemories.Add((displayName, facts));
+            // facts 여부에 관계없이 주입 완료로 기록 (재조회 방지)
+            context.InjectedSemanticMemoryUserIds.Add(userId);
+        }
+
+        var block = BuildSemanticMemoryBlock(userMemories);
+        if (block is null) return newMessage;
+
+        // LLM 전달용: semantic_memory 블록 + 원본 content 병합
+        return newMessage with
+        {
+            Content = block + "\n\n" + newMessage.Content
+        };
     }
 
     /// <summary>
@@ -429,6 +488,38 @@ public class MessageHandler
         if (options.ChannelIds.Contains(channelId)) return true;
         if (isMention && options.RespondToMentions) return true;
         return false;
+    }
+
+    /// <summary>
+    /// 유저별 semantic memory facts를 &lt;semantic_memory&gt; 블록으로 변환한다.
+    /// facts가 있는 유저만 포함. 모든 유저의 facts가 비어 있으면 null 반환.
+    /// </summary>
+    internal static string? BuildSemanticMemoryBlock(
+        IEnumerable<(string Name, IReadOnlyList<ArisuBot.Core.Models.SemanticMemoryFact> Facts)> userMemories)
+    {
+        var sb    = new System.Text.StringBuilder();
+        var hasAny = false;
+
+        foreach (var (name, facts) in userMemories)
+        {
+            var validFacts = facts.Where(f => !string.IsNullOrWhiteSpace(f.Content)).ToList();
+            if (validFacts.Count == 0) continue;
+
+            if (!hasAny)
+            {
+                sb.AppendLine("<semantic_memory>");
+                hasAny = true;
+            }
+
+            sb.AppendLine($"[{name}]");
+            foreach (var fact in validFacts)
+                sb.AppendLine($"- [{fact.Type}] {fact.Content}");
+        }
+
+        if (!hasAny) return null;
+
+        sb.Append("</semantic_memory>");
+        return sb.ToString();
     }
 
     /// <summary>문자열을 maxLength 단위로 분할한다. Discord 2000자 제한 대응.</summary>

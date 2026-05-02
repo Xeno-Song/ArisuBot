@@ -44,6 +44,20 @@ public class ConversationContext
 
     /// <summary>마지막 Compaction 실행 시각 (UTC). Cooldown 및 중복 실행 방지에 사용.</summary>
     public DateTime? LastCompactedAt { get; set; }
+
+    // --- Semantic Memory 상태 ---
+
+    /// <summary>
+    /// 이 세션에서 semantic memory가 주입된 Discord User ID 목록.
+    /// DB persist — 재시작 후에도 동일 세션 내 재주입 방지.
+    /// </summary>
+    public HashSet<ulong> InjectedSemanticMemoryUserIds { get; set; } = new();
+
+    /// <summary>
+    /// 이 세션(old session)에서 semantic memory 추출이 완료된 Discord User ID 목록.
+    /// Any() == true이면 이 세션에 대한 추출을 skip한다 (중복 방지).
+    /// </summary>
+    public List<ulong> SemanticMemoryRefs { get; set; } = new();
 }
 
 /// <summary>컨텍스트 범위 구분.</summary>

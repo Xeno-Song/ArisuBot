@@ -16,19 +16,22 @@ public class CompactionBackgroundService : BackgroundService
 
     private readonly IConversationRepository   _repository;
     private readonly ICompactionService        _compactionService;
+    private readonly ISemanticMemoryService    _semanticMemoryService;
     private readonly CompactionTriggerEvaluator _triggerEvaluator;
     private readonly ILogger<CompactionBackgroundService> _logger;
 
     public CompactionBackgroundService(
         IConversationRepository repository,
         ICompactionService compactionService,
+        ISemanticMemoryService semanticMemoryService,
         CompactionTriggerEvaluator triggerEvaluator,
         ILogger<CompactionBackgroundService> logger)
     {
-        _repository        = repository;
-        _compactionService  = compactionService;
-        _triggerEvaluator   = triggerEvaluator;
-        _logger             = logger;
+        _repository             = repository;
+        _compactionService      = compactionService;
+        _semanticMemoryService  = semanticMemoryService;
+        _triggerEvaluator       = triggerEvaluator;
+        _logger                 = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -85,6 +88,18 @@ public class CompactionBackgroundService : BackgroundService
             {
                 _logger.LogError(ex,
                     "[BackgroundCompaction] Compaction 실패 — contextId={Id}", context.Id);
+                continue;
+            }
+
+            // Compaction 성공 후 독립 실행 — 실패해도 루프 계속
+            try
+            {
+                await _semanticMemoryService.ExtractAndSaveAsync(context, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[BackgroundCompaction] SemanticMemory 추출 실패 — contextId={Id}", context.Id);
             }
         }
     }

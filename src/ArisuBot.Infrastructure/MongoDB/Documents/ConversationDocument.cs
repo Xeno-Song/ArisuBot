@@ -83,6 +83,16 @@ public class ConversationDocument
     [BsonIgnoreIfNull]
     public DateTime? LastCompactedAt { get; set; }
 
+    // --- Semantic Memory 상태 ---
+
+    /// <summary>이 세션에서 semantic memory가 주입된 Discord User ID 목록 (string 저장). 기존 문서에 없으면 빈 배열.</summary>
+    [BsonElement("injectedSemanticMemoryUserIds")]
+    public List<string> InjectedSemanticMemoryUserIds { get; set; } = new();
+
+    /// <summary>이 세션에서 semantic memory 추출이 완료된 Discord User ID 목록 (string 저장). 기존 문서에 없으면 빈 배열.</summary>
+    [BsonElement("semanticMemoryRefs")]
+    public List<string> SemanticMemoryRefs { get; set; } = new();
+
     // --- Dashboard 집계 전용 필드 (DB 저장 안 됨, $addFields 집계 결과 수신) ---
 
     /// <summary>메시지 수. DB에 저장되지 않으며 GetAllSessionsAsync 집계 시에만 채워진다.</summary>
@@ -117,7 +127,11 @@ public class ConversationDocument
             : null,
         LastCompactedAt   = LastCompactedAt.HasValue
             ? DateTime.SpecifyKind(LastCompactedAt.Value, DateTimeKind.Utc)
-            : null
+            : null,
+        InjectedSemanticMemoryUserIds = InjectedSemanticMemoryUserIds
+            .Select(ulong.Parse).ToHashSet(),
+        SemanticMemoryRefs = SemanticMemoryRefs
+            .Select(ulong.Parse).ToList()
     };
 
     /// <summary>도메인 모델에서 도큐먼트 생성.</summary>
@@ -144,7 +158,11 @@ public class ConversationDocument
         CompactionFactsJson = context.CompactionFacts is not null
             ? JsonSerializer.Serialize(context.CompactionFacts)
             : null,
-        LastCompactedAt    = context.LastCompactedAt
+        LastCompactedAt    = context.LastCompactedAt,
+        InjectedSemanticMemoryUserIds = context.InjectedSemanticMemoryUserIds
+            .Select(id => id.ToString()).ToList(),
+        SemanticMemoryRefs = context.SemanticMemoryRefs
+            .Select(id => id.ToString()).ToList()
     };
 }
 

@@ -12,6 +12,12 @@ public interface IPromptLoader
     /// <summary>compaction.md 내용. Compaction 트리거 시 User 메시지로 append되는 추출 지시문.</summary>
     string CompactionPrompt { get; }
 
+    /// <summary>semantic_memory_extraction.md 내용. Semantic memory 추출 LLM 호출 시 User 메시지로 append되는 지시문.</summary>
+    string SemanticMemoryExtractionPrompt { get; }
+
+    /// <summary>semantic_memory_compression.md 내용. Semantic memory 압축 LLM 호출 시 사용.</summary>
+    string SemanticMemoryCompressionPrompt { get; }
+
     /// <summary>파일을 다시 읽어 캐시를 갱신한다. /new-session 호출 시 사용.</summary>
     void Reload();
 }

@@ -28,13 +28,20 @@ ArisuBot/
 │   │   ├── Interfaces/
 │   │   │   ├── ILLMProvider.cs
 │   │   │   ├── IConversationRepository.cs
+│   │   │   ├── ISemanticMemoryRepository.cs
+│   │   │   ├── ISemanticMemoryService.cs
 │   │   │   └── IAIMessageLogger.cs
 │   │   ├── Models/
 │   │   │   ├── ChatMessage.cs
 │   │   │   ├── ConversationContext.cs
+│   │   │   ├── SemanticMemoryData.cs
+│   │   │   ├── UserSemanticMemory.cs
 │   │   │   └── LLMResponse.cs
+│   │   ├── Options/
+│   │   │   └── SemanticMemoryOptions.cs
 │   │   └── Services/
-│   │       └── ConversationService.cs
+│   │       ├── ConversationService.cs
+│   │       └── SemanticMemoryService.cs
 │   │
 │   ├── ArisuBot.LLM/               # LLM provider implementations
 │   │   ├── Gemini/
@@ -52,7 +59,11 @@ ArisuBot/
 │   ├── ArisuBot.Infrastructure/    # MongoDB, Log4Net 구현체
 │   │   ├── MongoDB/
 │   │   │   ├── ConversationRepository.cs
-│   │   │   └── AIMessageLogger.cs
+│   │   │   ├── SemanticMemoryRepository.cs
+│   │   │   ├── AIMessageLogger.cs
+│   │   │   └── Documents/
+│   │   │       ├── ConversationDocument.cs
+│   │   │       └── SemanticMemoryDocument.cs
 │   │   └── Logging/
 │   │       └── Log4NetLogger.cs
 │   │
@@ -239,9 +250,10 @@ services.AddSingleton<ILLMProvider>(sp =>
 
 | Collection | 용도 | 사용 위치 |
 |-----------|------|----------|
-| `conversation_contexts` | 유저/채널별 대화 히스토리 + 토큰 사용량 | `ConversationRepository`, `MongoQueryService` |
+| `conversation_contexts` | 유저/채널별 대화 히스토리 + 토큰 사용량 | `ConversationRepository` |
 | `ai_message_logs` | 전체 AI 메시지 감사 로그 | `AIMessageLogger` |
-| `error_logs` | LLM/Tool 에러 로그 | `ErrorLogger`, `MongoQueryService` |
+| `error_logs` | LLM/Tool 에러 로그 | `ErrorLogger` |
+| `semantic_memory` | 유저별 session별 semantic memory (traits/episodic) | `SemanticMemoryRepository` |
 
 ### `conversation_contexts` Document
 
@@ -301,6 +313,99 @@ ENTRYPOINT ["dotnet", "ArisuBot.Host.dll"]
 ```
 
 `appsettings.Local.json`은 볼륨 마운트 또는 환경변수로 주입.
+
+---
+
+## Semantic Memory
+
+### 개요
+
+Compaction과 완전히 분리된 독립 서비스. 대화 종료 후 유저별 맞춤 정보를 추출하여 영구 저장하고, 이후 세션에서 첫 메시지 시 LLM context에 주입한다.
+
+### 데이터 모델
+
+```csharp
+// per-session document (MongoDB)
+public class UserSemanticMemory {
+    public string Id { get; set; }              // MongoDB ObjectId (InsertOne 후 채워짐)
+    public ulong UserId { get; set; }           // Discord User ID
+    public string SessionId { get; set; }       // 추출한 conversation context ID
+    public string State { get; set; }           // "active" | "inactive" (수동 관리)
+    public SemanticMemoryData Extracted { get; set; }  // 이번 session 추출분
+    public SemanticMemoryData Snapshot { get; set; }   // 이전 snapshot + 이번 extracted 누적
+    public DateTime CreatedAt { get; set; }
+}
+
+public class SemanticMemoryData {
+    public List<string> Traits { get; set; }   // 성향·선호·습관
+    public List<string> Episodic { get; set; } // 경험·사건·에피소드
+}
+```
+
+**설계 원칙**:
+- 도큐먼트는 session별로 생성 (갱신 아님) → 히스토리 보존, rollback 가능
+- `state = "inactive"` 로 수동 설정 시 해당 document는 주입에서 제외
+- LLM 주입에는 가장 최신 `active` document의 `snapshot` 사용
+
+### 처리 흐름
+
+```
+Compaction 완료 후 (호출자 오케스트레이션)
+     │
+     ▼
+SemanticMemoryService.ExtractAndSaveAsync(context)
+     │
+     ├─ SemanticMemoryRefs.Any() → 이미 처리된 session → skip
+     │
+     ├─ LLM 호출 (responseSchema: users[]·subject/traits/episodic)
+     │   └─ CacheHint 전달 (캐시 유효 시 Gemini explicit cache 활용)
+     │
+     └─ per-user 처리:
+          ├─ Participants 매핑 (subject → userId)
+          ├─ GetLatestActiveAsync → 이전 snapshot 조회
+          ├─ snapshot = 이전 snapshot + 이번 extracted 누적
+          ├─ CompressIfNeededAsync (trait/episodic count >= threshold 시 LLM 압축)
+          │   └─ 빈 결과 반환 시 원본 보존 (데이터 손실 방지)
+          ├─ CreateAsync (per-session document 신규 삽입)
+          ├─ SemanticMemoryRefs.Add(userId)
+          └─ SaveContextAsync
+```
+
+### 주입 흐름
+
+```
+MessageHandler.ProcessBatchAsync
+     │
+     └─ 첫 메시지 수신 시 (InjectedSemanticMemoryUserIds에 없는 userId)
+          ├─ GetLatestSnapshotAsync(userId) per un-injected user
+          ├─ BuildSemanticMemoryBlock() → <semantic_memory> 블록 생성
+          ├─ LLM 메시지에만 prepend (DB 저장 원본 메시지 유지)
+          └─ InjectedSemanticMemoryUserIds에 userId 기록 (session 내 1회)
+```
+
+### 주입 형식
+
+```
+<semantic_memory>
+[Alice]
+[Traits]
+- Alice는 고양이를 좋아한다.
+[Episodic]
+- Alice는 도쿄를 방문했다.
+
+[Bob]
+[Traits]
+- Bob은 피자를 좋아한다.
+</semantic_memory>
+```
+
+### 압축 전략
+
+- `Traits` / `Episodic` 독립 threshold (`SemanticMemory.TraitCompressionThreshold`, `EpisodicCompressionThreshold`)
+- snapshot 누적 후 count >= threshold 시 LLM 압축 호출
+- 빈 결과 또는 파싱 실패 시 원본 목록 보존 (데이터 손실 방지)
+- Phase 2: `CompressionModel` 필드 예약 (현재 미사용)
+- 상세 계약: [65_SEMANTIC_MEMORY_PLAN.md](65_SEMANTIC_MEMORY_PLAN.md)
 
 ---
 

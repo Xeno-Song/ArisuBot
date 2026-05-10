@@ -10,6 +10,8 @@ public class FilePromptLoader : IPromptLoader
     public string SystemPrompt { get; private set; } = string.Empty;
     public string PersonaPrompt { get; private set; } = string.Empty;
     public string CompactionPrompt { get; private set; } = string.Empty;
+    public string SemanticMemoryExtractionPrompt { get; private set; } = string.Empty;
+    public string SemanticMemoryCompressionPrompt { get; private set; } = string.Empty;
 
     /// <summary>생성 시 즉시 파일을 읽는다. 파일 없으면 FileNotFoundException (fail-fast).</summary>
     public FilePromptLoader(string promptsDirectory)
@@ -21,8 +23,10 @@ public class FilePromptLoader : IPromptLoader
     /// <summary>system.md, persona.md, compaction.md를 파일에서 다시 읽어 캐시를 갱신한다.</summary>
     public void Reload()
     {
-        SystemPrompt     = File.ReadAllText(Path.Combine(_promptsDirectory, "system.md"));
-        PersonaPrompt    = File.ReadAllText(Path.Combine(_promptsDirectory, "persona.md"));
-        CompactionPrompt = File.ReadAllText(Path.Combine(_promptsDirectory, "compaction.md"));
+        SystemPrompt                    = File.ReadAllText(Path.Combine(_promptsDirectory, "system.md"));
+        PersonaPrompt                   = File.ReadAllText(Path.Combine(_promptsDirectory, "persona.md"));
+        CompactionPrompt                = File.ReadAllText(Path.Combine(_promptsDirectory, "compaction.md"));
+        SemanticMemoryExtractionPrompt  = File.ReadAllText(Path.Combine(_promptsDirectory, "semantic_memory_extraction.md"));
+        SemanticMemoryCompressionPrompt = File.ReadAllText(Path.Combine(_promptsDirectory, "semantic_memory_compression.md"));
     }
 }

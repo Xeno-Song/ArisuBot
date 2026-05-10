@@ -47,10 +47,12 @@ services.Configure<DiscordToolOptions>(config.GetSection(DiscordToolOptions.Sect
 services.Configure<MongoDbOptions>(config.GetSection(MongoDbOptions.SectionName));
 services.Configure<MemoryOptions>(config.GetSection(MemoryOptions.SectionName));
 services.Configure<CompactionOptions>(config.GetSection(CompactionOptions.SectionName));
+services.Configure<SemanticMemoryOptions>(config.GetSection(SemanticMemoryOptions.SectionName));
 
 // Infrastructure — MongoDB
 services.AddSingleton<MongoDbContext>();
 services.AddSingleton<IConversationRepository, ConversationRepository>();
+services.AddSingleton<ISemanticMemoryRepository, SemanticMemoryRepository>();
 services.AddSingleton<IAIMessageLogger, AIMessageLogger>();
 services.AddSingleton<IErrorLogger, ErrorLogger>();
 
@@ -68,6 +70,7 @@ services.AddSingleton<IPromptLoader>(_ => new FilePromptLoader(promptsPath));
 services.AddSingleton<ConversationService>();
 services.AddSingleton<CompactionTriggerEvaluator>();
 services.AddSingleton<ICompactionService, CompactionService>();
+services.AddSingleton<ISemanticMemoryService, SemanticMemoryService>();
 
 // LLM
 services.AddLLMProvider(config);

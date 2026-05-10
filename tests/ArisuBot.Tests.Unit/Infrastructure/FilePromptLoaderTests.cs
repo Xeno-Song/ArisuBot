@@ -14,23 +14,32 @@ public class FilePromptLoaderTests : IDisposable
 
     public void Dispose() => Directory.Delete(_tempDir, recursive: true);
 
-    private void WritePrompts(string system, string persona, string compaction = "compaction content")
+    private void WritePrompts(
+        string system,
+        string persona,
+        string compaction = "compaction content",
+        string extraction = "extraction content",
+        string compression = "compression content")
     {
         File.WriteAllText(Path.Combine(_tempDir, "system.md"), system);
         File.WriteAllText(Path.Combine(_tempDir, "persona.md"), persona);
         File.WriteAllText(Path.Combine(_tempDir, "compaction.md"), compaction);
+        File.WriteAllText(Path.Combine(_tempDir, "semantic_memory_extraction.md"), extraction);
+        File.WriteAllText(Path.Combine(_tempDir, "semantic_memory_compression.md"), compression);
     }
 
     [Fact]
     public void Constructor_LoadsPromptsFromFiles()
     {
-        WritePrompts("sys content", "persona content", "compaction content");
+        WritePrompts("sys content", "persona content", "compaction content", "extraction content", "compression content");
 
         var loader = new FilePromptLoader(_tempDir);
 
         Assert.Equal("sys content", loader.SystemPrompt);
         Assert.Equal("persona content", loader.PersonaPrompt);
         Assert.Equal("compaction content", loader.CompactionPrompt);
+        Assert.Equal("extraction content", loader.SemanticMemoryExtractionPrompt);
+        Assert.Equal("compression content", loader.SemanticMemoryCompressionPrompt);
     }
 
     [Fact]
@@ -63,15 +72,17 @@ public class FilePromptLoaderTests : IDisposable
     [Fact]
     public void Reload_UpdatesPromptsFromFiles()
     {
-        WritePrompts("original sys", "original persona", "original compaction");
+        WritePrompts("original sys", "original persona", "original compaction", "original extraction", "original compression");
         var loader = new FilePromptLoader(_tempDir);
 
-        WritePrompts("updated sys", "updated persona", "updated compaction");
+        WritePrompts("updated sys", "updated persona", "updated compaction", "updated extraction", "updated compression");
         loader.Reload();
 
         Assert.Equal("updated sys", loader.SystemPrompt);
         Assert.Equal("updated persona", loader.PersonaPrompt);
         Assert.Equal("updated compaction", loader.CompactionPrompt);
+        Assert.Equal("updated extraction", loader.SemanticMemoryExtractionPrompt);
+        Assert.Equal("updated compression", loader.SemanticMemoryCompressionPrompt);
     }
 
     [Fact]
